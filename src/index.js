@@ -34,7 +34,7 @@ const tailCall = async () =>
 const $ = (id) => document.getElementById(id);
 
 let ex, names, api;
-let running = false, cancel = false, queued = null, liveTimer = 0;
+let running = false, cancel = false, queued = false;
 
 const fail = (msg, fatal = false) => {
   const el = $("err");
@@ -124,7 +124,7 @@ function albedo() {
   return [1, 3, 5].map((i) => (parseInt(h.slice(i, i + 2), 16) / 255) ** 2);
 }
 
-function readOpts(preview) {
+function readOpts() {
   const scene = num("scene");
   const az = (num("azimuth") * Math.PI) / 180;
   const d = num("distance");
@@ -147,45 +147,34 @@ function readOpts(preview) {
       albedo: albedo(),
     },
   };
-  if (preview) {                   // cheap enough to follow a slider
-    o.width = Math.min(o.width, 140);
-    o.samples = 1;
-    o.depth = Math.min(o.depth, 8);
-  }
   o.height = Math.max(1, Math.floor((o.width * 2) / 3));
   return o;
 }
 
-// Only the small scenes are fast enough to redraw while a slider moves; the
-// weekend scene's 488 spheres are about eighty times the work per ray.
-const isLive = () => num("scene") !== 1;
-
-function requestRender(preview) {
-  queued = { preview };
+function requestRender() {
+  queued = true;
   if (running) { cancel = true; return; }
   pump();
 }
 
 // The only consumer of `queued`, and the reason there is never more than one
-// render in flight: requestRender just overwrites the slot, so a request that
-// arrives mid-render replaces whatever was waiting there rather than queueing
-// behind it. The cancelled render unwinds, this loop claims the newest request
-// and goes round again -- the canvas follows the current control state instead
-// of catching up through a backlog of stale ones.
+// render in flight: requestRender just raises the flag, so requests that arrive
+// mid-render collapse into one rather than queueing up. The cancelled render
+// unwinds, this loop renders once more from the current control state and goes
+// round again -- the canvas catches up to the controls instead of working
+// through a backlog of stale images.
 async function pump() {
   while (queued) {
-    const { preview } = queued;
-    queued = null;
-    await render(preview);
+    queued = false;
+    await render();
   }
 }
 
+// Dragging only moves the readout: a render costs far more than a frame, so
+// the image waits for the `change` that the release fires.
 function onControlInput(e) {
   const l = e.target.closest("label")?.querySelector(".v");
   if (l) l.textContent = fmt(e.target);
-  if (!isLive()) { $("hint").textContent = "press Render to apply"; return; }
-  clearTimeout(liveTimer);
-  liveTimer = setTimeout(() => requestRender(true), 60);
 }
 
 const units = { azimuth: "\u00b0", vfov: "\u00b0" };
@@ -195,12 +184,12 @@ const fmt = (el) => el.value + (units[el.id] || "");
 
 const sleep = () => new Promise((r) => setTimeout(r, 0));
 
-async function render(preview) {
+async function render() {
   running = true; cancel = false;
   $("go").textContent = "Stop";
   $("err").style.display = "none";
 
-  const opts = readOpts(preview);
+  const opts = readOpts();
   const canvas = $("canvas");
   canvas.width = opts.width;
   canvas.height = opts.height;
@@ -246,7 +235,7 @@ async function render(preview) {
       }
       ctx.putImageData(image, 0, y);
       const secs = (performance.now() - t0) / 1000;
-      $("status").textContent = (preview ? "preview " : "") +
+      $("status").textContent =
         `row ${y + 1} / ${opts.height}   ${secs.toFixed(1)} s` +
         `   ${(ex.memory.buffer.byteLength / (1024 * 1024)).toFixed(0)} MB`;
       await sleep();                       // let the page paint
@@ -257,8 +246,6 @@ async function render(preview) {
     $("status").textContent =
       cancel && !queued ? `stopped after ${secs} s`
       : queued ? `${secs} s`
-      : preview ? `preview in ${secs} s   ${mem} MB   -- press Render for ` +
-                  `${$("samples").value} samples at full size`
       : `done in ${secs} s   ${mem} MB of linear memory`;
   } catch (e) {
     fail(e.oom
@@ -279,8 +266,7 @@ function sceneChanged() {
   const scene = num("scene");
   $("object-panel").style.display = scene === 2 ? "" : "none";
   $("camera-panel").style.display = scene === 0 ? "none" : "";
-  $("hint").textContent = isLive() ? "the controls redraw a preview as you drag"
-                                   : "488 spheres: the controls apply on Render";
+  $("hint").textContent = "the controls redraw when you let go";
 }
 
 function matChanged() {
@@ -304,21 +290,22 @@ function wire() {
     const l = el.closest("label").querySelector(".v");
     if (l) l.textContent = fmt(el);
     el.addEventListener("input", onControlInput);
-    el.addEventListener("change", () => { if (isLive()) requestRender(false); });
+    el.addEventListener("change", () => requestRender());
   }
   for (const id of ["mat", "albedo"]) {
     $(id).addEventListener("input", (e) => {
       if (id === "mat") matChanged();
       onControlInput(e);
     });
+    $(id).addEventListener("change", () => requestRender());
   }
-  $("scene").addEventListener("change", () => { sceneChanged(); requestRender(false); });
+  $("scene").addEventListener("change", () => { sceneChanged(); requestRender(); });
   for (const id of ["width", "samples", "depth", "seed"]) {
-    $(id).addEventListener("change", () => requestRender(false));
+    $(id).addEventListener("change", () => requestRender());
   }
   $("go").addEventListener("click", () => {
-    if (running) { cancel = true; queued = null; return; }
-    requestRender(false);
+    if (running) { cancel = true; queued = false; return; }
+    requestRender();
   });
   $("save").addEventListener("click", () => {
     $("canvas").toBlob((b) => {
@@ -357,7 +344,7 @@ async function boot() {
     baseMem = ex.mem_ptr.value;
     wire();
     $("status").textContent = "ready";
-    requestRender(false);
+    requestRender();
   } catch (e) {
     fail("Failed to load the renderer: " + e, true);
   }
