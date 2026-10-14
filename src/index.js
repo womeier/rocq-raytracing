@@ -166,6 +166,12 @@ function requestRender(preview) {
   pump();
 }
 
+// The only consumer of `queued`, and the reason there is never more than one
+// render in flight: requestRender just overwrites the slot, so a request that
+// arrives mid-render replaces whatever was waiting there rather than queueing
+// behind it. The cancelled render unwinds, this loop claims the newest request
+// and goes round again -- the canvas follows the current control state instead
+// of catching up through a backlog of stale ones.
 async function pump() {
   while (queued) {
     const { preview } = queued;
@@ -174,7 +180,7 @@ async function pump() {
   }
 }
 
-function slid(e) {
+function onControlInput(e) {
   const l = e.target.closest("label")?.querySelector(".v");
   if (l) l.textContent = fmt(e.target);
   if (!isLive()) { $("hint").textContent = "press Render to apply"; return; }
@@ -235,7 +241,7 @@ async function render(preview) {
           image.data[4 * (x0 + i) + 0] = bytes[3 * i];
           image.data[4 * (x0 + i) + 1] = bytes[3 * i + 1];
           image.data[4 * (x0 + i) + 2] = bytes[3 * i + 2];
-          image.data[4 * (x0 + i) + 3] = 255;
+          image.data[4 * (x0 + i) + 3] = 255;   // the canvas is RGBA, sets transparency
         }
       }
       ctx.putImageData(image, 0, y);
@@ -291,13 +297,13 @@ function wire() {
   for (const el of document.querySelectorAll("input[type=range]")) {
     const l = el.closest("label").querySelector(".v");
     if (l) l.textContent = fmt(el);
-    el.addEventListener("input", slid);
+    el.addEventListener("input", onControlInput);
     el.addEventListener("change", () => { if (isLive()) requestRender(false); });
   }
   for (const id of ["mat", "albedo"]) {
     $(id).addEventListener("input", (e) => {
       if (id === "mat") matChanged();
-      slid(e);
+      onControlInput(e);
     });
   }
   $("scene").addEventListener("change", () => { sceneChanged(); requestRender(false); });
