@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A raytracer in Rocq, compiled to Wasm by CertiRocq</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f7f8; --fg:#24242a; --panel:#fff; --line:#e3e3e8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16161a; --fg:#e6e6ea; --panel:#1f1f25; --line:#33333d; }
+  }
+  body {
+    font-family: system-ui, "Segoe UI", sans-serif;
+    margin: 0; padding: 2rem 1rem 3rem;
+    display: flex; flex-direction: column; align-items: center;
+    background: var(--bg); color: var(--fg);
+  }
+  h1 { margin: 0; font-size: 1.7rem; font-weight: 700; text-align: center; }
+  #subtitle { margin: .4rem 0 1.6rem; font-size: .85rem; opacity: .7; text-align: center; max-width: 46rem; }
+  #subtitle a { color: inherit; }
+  canvas {
+    image-rendering: pixelated; background: #cfd6e0;
+    border-radius: 6px; width: min(720px, 100%); aspect-ratio: 3 / 2;
+    box-shadow: 0 2px 16px rgba(0,0,0,.18);
+  }
+  #status { font-size: .8rem; opacity: .7; min-height: 1.2em; margin-top: .6rem;
+            font-variant-numeric: tabular-nums; }
+  .panel {
+    width: min(720px, 100%); box-sizing: border-box;
+    margin-top: 1rem; padding: .9rem 1.1rem;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .panel h2 { margin: 0 0 .7rem; font-size: .7rem; letter-spacing: .08em;
+              text-transform: uppercase; opacity: .55; font-weight: 700; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .7rem 1.1rem; }
+  label { display: flex; flex-direction: column; font-size: .72rem; gap: .25rem;
+          opacity: .85; position: relative; }
+  label .v { position: absolute; right: 0; top: 0; opacity: .6;
+             font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: #4a5bd4; margin: 0; }
+  input[type=number], select, input[type=color] {
+    font: inherit; font-size: .9rem; padding: .3rem .4rem; width: 100%;
+    box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); color: var(--fg);
+  }
+  input[type=color] { padding: .1rem; height: 2rem; }
+  .row { display: flex; gap: .7rem; align-items: center; margin-top: .9rem; flex-wrap: wrap; }
+  button {
+    border: none; border-radius: 6px; padding: .5rem 1.2rem; font-size: .9rem;
+    font-weight: 600; cursor: pointer; background: #4a5bd4; color: #fff;
+  }
+  button:hover { background: #5a6ae0; }
+  #save { background: #6b7280; }
+  .hint { font-size: .72rem; opacity: .6; }
+  .error { display: none; margin-top: 1rem; padding: .8rem 1rem; max-width: 40rem;
+           background: #fdecec; color: #a32020; border-radius: 6px; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>A raytracer in Rocq</h1>
+<p id="subtitle">
+  <em>Ray Tracing in One Weekend</em>, written in
+  <a href="https://rocq-prover.org/">Rocq</a> and compiled to WebAssembly by
+  <a href="https://github.com/CertiCoq/certicoq">CertiRocq</a>'s verified backend.
+  Ported from <a href="https://github.com/kmill/lean4-raytracer">kmill/lean4-raytracer</a>
+  and <a href="https://github.com/TOTBWF/lean4-raytrace">TOTBWF/lean4-raytrace</a>.
+  There are no floats in the Wasm: the arithmetic is fixed point on primitive
+  63-bit integers.
+</p>
+
+<canvas id="canvas" width="240" height="160"></canvas>
+<div id="status">loading…</div>
+
+<div class="panel">
+  <h2>Image</h2>
+  <div class="grid">
+    <label>Scene
+      <select id="scene">
+        <option value="2" selected>Three spheres (adjustable)</option>
+        <option value="1">One Weekend (488 spheres)</option>
+        <option value="0">One sphere, normals only</option>
+      </select>
+    </label>
+    <label>Width<input id="width" type="number" min="16" max="2048" step="8" value="240"></label>
+    <label>Samples<input id="samples" type="number" min="1" max="1024" value="8"></label>
+    <label>Max depth<input id="depth" type="number" min="1" max="128" value="12"></label>
+    <label>Seed<input id="seed" type="number" min="1" value="1"></label>
+  </div>
+  <div class="row">
+    <button id="go">Render</button>
+    <button id="save">Save PNG</button>
+    <span class="hint" id="hint"></span>
+  </div>
+</div>
+
+<div class="panel" id="camera-panel">
+  <h2>Camera</h2>
+  <div class="grid">
+    <label>Angle <span class="v"></span><input id="azimuth" type="range" min="-180" max="180" step="1" value="13"></label>
+    <label>Height <span class="v"></span><input id="elevation" type="range" min="0.3" max="10" step="0.1" value="2"></label>
+    <label>Distance <span class="v"></span><input id="distance" type="range" min="3" max="30" step="0.1" value="13.3"></label>
+    <label>Field of view <span class="v"></span><input id="vfov" type="range" min="8" max="70" step="1" value="26"></label>
+    <label>Aperture <span class="v"></span><input id="aperture" type="range" min="0" max="1" step="0.02" value="0.1"></label>
+    <label>Focus distance <span class="v"></span><input id="focus" type="range" min="1" max="30" step="0.5" value="10"></label>
+  </div>
+</div>
+
+<div class="panel" id="object-panel">
+  <h2>The middle sphere</h2>
+  <div class="grid">
+    <label>Left / right <span class="v"></span><input id="objz" type="range" min="-2" max="2" step="0.05" value="0"></label>
+    <label>Height <span class="v"></span><input id="objy" type="range" min="0.2" max="4" step="0.05" value="1"></label>
+    <label>Near / far <span class="v"></span><input id="objx" type="range" min="-3" max="3" step="0.05" value="0"></label>
+    <label>Radius <span class="v"></span><input id="radius" type="range" min="0.2" max="2.5" step="0.05" value="1"></label>
+    <label>Material
+      <select id="mat">
+        <option value="2" selected>Glass</option>
+        <option value="1">Metal</option>
+        <option value="0">Diffuse</option>
+      </select>
+    </label>
+    <label id="param-label">Refractive index <span class="v"></span><input id="param" type="range" min="0" max="2.5" step="0.05" value="1.5"></label>
+    <label>Colour<input id="albedo" type="color" value="#cc4d4d"></label>
+  </div>
+</div>
+
+<div id="err" class="error"></div>
+<script src="index.js"></script>
+</body>
+</html>

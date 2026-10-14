@@ -1,0 +1,11 @@
+-Q theories Raytracing
+
+theories/Fixed.v
+theories/Trig.v
+theories/Vec3.v
+theories/Random.v
+theories/Scene.v
+theories/Render.v
+theories/Proofs.v
+theories/Tests.v
+theories/extraction.v
