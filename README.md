@@ -1,36 +1,38 @@
 # A raytracer in Rocq, compiled to WebAssembly by CertiRocq
 
-*Ray Tracing in One Weekend*, written in [Rocq](https://rocq-prover.org/) and
-compiled to a single Wasm module by [CertiRocq](https://github.com/CertiCoq/certicoq)'s
-verified Wasm backend.
-Based on [kmill/lean4-raytracer](https://github.com/kmill/lean4-raytracer) (the scene, the materials and the camera) and
+Live demo at [https://womeier.github.io/rocq-raytracing](https://womeier.github.io/rocq-raytracing).
+
+## About
+
+Raytracing in [Rocq](https://rocq-prover.org/) and compiled to a single Wasm module by [CertiRocq](https://github.com/CertiCoq/certicoq).
+Inspired by the book *Ray Tracing in One Weekend*,
+based on [kmill/lean4-raytracer](https://github.com/kmill/lean4-raytracer) (the scene, the materials and the camera) and
 [TOTBWF/lean4-raytrace](https://github.com/TOTBWF/lean4-raytrace).
 
 There are no floats in the Wasm module: CertiRocq's Wasm backend does not compile
 primitive floats, so the arithmetic is done on primitive 63-bit integers.
 
-## Building and running
 
+## Building and running
+### Local webserver (recommended)
+```sh
+nix run .#serve
+# then open the page on localhost:8000
+```
+
+### Command line
 ```sh
 nix develop                 # rocq 9.1 + CertiRocq + node
 make                        # -> Raytracing.extraction.raytracer_wasm_api.wasm
 
 node tools/render.js out.ppm --scene 1 --width 200 --samples 8 --depth 16
 node tools/render.js out.ppm --scene 2 --mat 1 --param 0.25 --radius 1.7
+
+# or directly
+nix run . -- out.ppm --scene 2
 ```
 
-Or straight from the flake, without entering the shell:
-
-```sh
-nix run . -- out.ppm --scene 2        # the same driver, on the built module
-nix run .#serve                       # the web page on localhost:8000
-nix flake check                       # builds, which runs Tests.v
-```
-
-`nix build` puts the web bundle in `result/`: `raytracer.wasm`, `index.html`,
-`index.js` and `render.js`. The page needs a server rather than a `file://`
-URL -- a Wasm module cannot be fetched from one -- and `nix run .#serve` is
-one; any static server will do.
+## Scenes and options
 
 There are three scenes. `--scene 0` is one sphere shaded by its normal,
 `--scene 1` is the book's final image (488 spheres), and `--scene 2` is three
@@ -44,7 +46,7 @@ allows), `--budget` (MB of linear memory one call may allocate, default 256),
 metal, glass), `--param` (the metal's fuzz, or the glass's refractive index)
 and `--albedo r,g,b`.
 
-## Layout
+## File Layout
 
 | | |
 |---|---|
@@ -60,25 +62,13 @@ and `--albedo r,g,b`.
 | `tools/render.js` | the node driver: renders a PPM file |
 | `src/` | the browser front end: renders onto a canvas, with controls |
 
-## The web page
-
-`src/index.html` drives the same module from a browser, painting each row as
-it arrives. Scene 2 is there so that the controls can do something: it is four
-spheres rather than 488, about eighty times less work per ray, so moving a
-slider redraws a reduced-size, one-sample preview in a fraction of a second and
-a full-quality frame follows when the slider is released. The camera controls
-(angle, height, distance, field of view, aperture, focus) apply to the weekend
-scene as well, but there they only take effect on **Render** -- a live preview
-of 488 spheres would take about fifteen seconds a frame, which is not a
-preview.
-
 Everything the controls set is a field of `Scene.knobs`, which `prepare` reads;
 the host writes those fields as fixed-point words (`round(x * 2^24)`), so the
 JavaScript never has to agree with the module about anything but the layout of
 a record.
 
-## Why fixed point
 
+## Why fixed point
 The backend rejects primitive floats outright:
 
 ```coq
@@ -120,16 +110,6 @@ api_header  : config -> list byte                 (* the PPM header *)
 api_prepare : config -> scene_data                (* the world and the camera *)
 api_render  : scene_data * job -> list byte       (* a span of a row *)
 ```
-
-There is no garbage collector, so the only way to free what a call allocated is to
-reset `mem_ptr`. The host therefore takes a watermark after `api_prepare` and
-rewinds to it after every `api_render` — which is also why the scene is prepared
-once and handed back in, rather than rebuilt inside each call. A job covers a span
-of one row, so its allocations are bounded; the drivers price one pixel in the
-middle of the image and size the span to a memory budget.
-
-The sampling stream of a pixel is derived from its coordinates, so the image does
-not depend on how it was cut into jobs.
 
 ## Memory and speed
 
