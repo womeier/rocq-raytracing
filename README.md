@@ -1,4 +1,4 @@
-# A raytracer in Rocq, compiled to WebAssembly by CertiRocq
+# Raytracing in Rocq
 
 Live demo at [https://womeier.github.io/rocq-raytracing](https://womeier.github.io/rocq-raytracing).
 
