@@ -106,7 +106,8 @@ function call(clos, arg) {
 }
 
 // list byte: nil is the immediate 1, cons is [0, byte, tail]
-function byteList(p, into) {
+function byteList(p) {
+  const into = [];
   while (!(p & 1)) { into.push(ld(p, 1) >> 1); p = ld(p, 2); }
   return into;
 }
@@ -226,7 +227,7 @@ async function render(preview) {
       for (let x0 = 0; x0 < opts.width; x0 += chunk) {
         const count = Math.min(chunk, opts.width - x0);
         rewind();
-        const bytes = byteList(call(api.render, mkPair(scene, mkJob(cfg, y, x0, count))), []);
+        const bytes = byteList(call(api.render, mkPair(scene, mkJob(cfg, y, x0, count))));
         if (bytes.length !== 3 * count) throw new Error("the module returned " +
           bytes.length + " bytes for " + count + " pixels");
         if (ex.mem_ptr.value - memBase > opts.budget && chunk > 1) chunk >>= 1;
