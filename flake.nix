@@ -66,7 +66,6 @@
           mkdir -p $out
           cp Raytracing.extraction.raytracer_wasm_api.wasm $out/raytracer.wasm
           cp src/index.html src/index.js $out/
-          install -m 555 tools/render.js $out/render.js
           runHook postInstall
         '';
 
@@ -77,15 +76,8 @@
         };
       };
 
-      # Two ways to run the bundle: the node driver, which writes a PPM
-      # file, and a static server for the page, which needs one because a
-      # Wasm module cannot be fetched from a file:// URL.
-      render = pkgs.writeShellApplication {
-        name = "rocq-raytracer";
-        runtimeInputs = [ pkgs.nodejs_22 ];
-        text = ''exec node ${raytracer-wasm}/render.js "$@"'';
-      };
-
+      # The bundle is run by serving it: a static server for the page, which
+      # needs one because a Wasm module cannot be fetched from a file:// URL.
       serve = pkgs.writeShellApplication {
         name = "rocq-raytracer-serve";
         runtimeInputs = [ pkgs.python3 ];
@@ -105,25 +97,25 @@
         #   nix build --max-jobs 0 .#CertiRocq
         # CompCert comes with it (propagated), so that one fetch covers both.
         CertiRocq = rocqPackages.CertiRocq;
-        inherit render serve;
+        inherit serve;
       };
 
       # The build compiles Tests.v, whose examples are checked by
       # conversion, so building is the test suite.
       checks.${system}.build = raytracer-wasm;
 
-      apps.${system} = {
-        default = {
-          type = "app";
-          program = lib.getExe render;
-          meta.description = "Render an image to a PPM file";
+      apps.${system} =
+        let
+          serveApp = {
+            type = "app";
+            program = lib.getExe serve;
+            meta.description = "Serve the web page on http://localhost:8000/";
+          };
+        in
+        {
+          default = serveApp;
+          serve = serveApp;
         };
-        serve = {
-          type = "app";
-          program = lib.getExe serve;
-          meta.description = "Serve the web page on http://localhost:8000/";
-        };
-      };
 
       devShells.${system}.default = pkgs.mkShell {
         name = "rocq-raytracer";
@@ -134,7 +126,6 @@
           rocqPackages.stdlib
           rocqPackages.coq-lsp
           pkgs.gnumake
-          pkgs.nodejs_22
           pkgs.python3
           pkgs.wabt # wasm2wat, to look at what came out
         ];
@@ -144,10 +135,9 @@
         shellHook = ''
           echo "rocq-raytracer development environment"
           echo "  rocq:  $(rocq --version | head -1)"
-          echo "  node:  $(node --version)"
           echo ""
           echo "Build the Wasm module:  make        (or: nix build)"
-          echo "Render an image:        node tools/render.js out.ppm"
+          echo "Serve the page:         nix run .#serve   (then open localhost:8000)"
         '';
       };
     };
