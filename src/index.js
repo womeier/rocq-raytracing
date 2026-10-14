@@ -291,6 +291,12 @@ function matChanged() {
   label.style.opacity = mat === 0 ? ".4" : "";
   $("param").value = mat === 1 ? 0.3 : 1.5;
   label.querySelector(".v").textContent = $("param").value;
+
+  // Dielectric carries only its refractive index -- knob_material drops the
+  // albedo for glass, so the picker would be a control that does nothing.
+  const col = $("albedo");
+  col.disabled = mat === 2;
+  col.closest("label").style.opacity = col.disabled ? ".4" : "";
 }
 
 function wire() {
