@@ -25,7 +25,7 @@ linear memory stays at 2-250 MB.
 
 The images are in `bench/results/` (`<name>.rocq.png`, `<name>.lean.png`,
 `<name>.lean-mt.png`, and `<name>.diff.png`, the per-channel difference
-multiplied by 4).
+multiplied by 4). [`IMAGES.md`](IMAGES.md) shows them side by side.
 
 ## What the differences mean
 

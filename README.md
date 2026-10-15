@@ -29,7 +29,7 @@ nix run
 | `theories/Tests.v` | expectations checked by conversion at build time |
 | `theories/extraction.v` | the three entry points, and `CertiRocq Compile Wasm` |
 | `src/` | the browser front end: renders onto a canvas, with controls |
-| `bench/` | four examples rendered by both this project and the Lean originals |
+| `bench/` | four examples rendered by both this project and the Lean originals, side by side in [`bench/IMAGES.md`](bench/IMAGES.md) |
 | `FUTURE.md` | what it would take to close the performance gap, and what that is worth |
 
 Everything the controls set is a field of `Scene.knobs`, which `prepare` reads;
