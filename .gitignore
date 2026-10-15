@@ -40,6 +40,9 @@ result
 test-results/
 node_modules/
 
-# the benchmark fetches and builds the Lean originals, and writes its images
+# the benchmark fetches and builds the Lean originals; of what it writes next
+# to the committed PNGs, the raw PPMs and the fresh table are not worth keeping
 bench/vendor/
-bench/results/
+bench/results/*.ppm
+bench/results/results.json
+bench/results/results.md
