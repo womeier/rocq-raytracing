@@ -61,7 +61,8 @@ per span of a row, with the allocation pointer rewound between calls, since the
 compiled module has no garbage collector. `calls` in `results.json` is how many
 spans a render took, and `memory_mb` the high-water mark of linear memory.
 
-The last run's numbers are in [`RESULTS.md`](RESULTS.md).
+The last run's numbers are in [`RESULTS.md`](RESULTS.md), and
+[`IMAGES.md`](IMAGES.md) puts the renders side by side.
 
 ## What comes out
 
@@ -75,6 +76,8 @@ In `bench/results/` (git-ignored):
 | `<name>.lean-mt.png` | the same, rendered with `threads` tasks |
 | `results.json` | every timing, the allocation totals, the comparison statistics |
 | `results.md` | the table |
+
+The PNGs are committed; the PPMs they are made from are not.
 
 The two images cannot agree bit for bit: the Rocq renderer computes in Q38.24
 fixed point (`theories/Fixed.v`) where Lean uses IEEE doubles, and it draws
