@@ -1,0 +1,82 @@
+diff --git a/lakefile.lean b/lakefile.lean
+new file mode 100644
+index 0000000..fdabe41
+--- /dev/null
++++ b/lakefile.lean
+@@ -0,0 +1,10 @@
++import Lake
++open Lake DSL
++
++-- leanpkg is long gone; this is the same single-module package for lake.
++package trace where
++  srcDir := "src"
++
++@[default_target]
++lean_exe trace where
++  root := `trace
+diff --git a/lean-toolchain b/lean-toolchain
+new file mode 100644
+index 0000000..d8a6d7e
+--- /dev/null
++++ b/lean-toolchain
+@@ -0,0 +1 @@
++leanprover/lean4:v4.8.0-rc1
+diff --git a/src/trace.lean b/src/trace.lean
+index dc74058..cacb9c0 100644
+--- a/src/trace.lean
++++ b/src/trace.lean
+@@ -85,10 +85,10 @@ def intersect (r : Ray) (o : Object) : Option Float :=
+ def Matrix (h w : Nat) (A : Type) := Fin h → Fin w → A
+ 
+ def iterate_ (n : Nat) (f : Fin (Nat.succ n) → IO Unit) : IO Unit :=
+-  Nat.fold (fun k m => m *> f (Fin.ofNat k)) n (return ())
++  Nat.fold (fun k m => m *> f (Fin.ofNat k)) (n + 1) (return ())
+ 
+ def iterateRev_ (n : Nat) (f : Fin (Nat.succ n) → IO Unit) : IO Unit :=
+-  Nat.foldRev (fun k m => m *> f (Fin.ofNat k)) n (return ())
++  Nat.foldRev (fun k m => m *> f (Fin.ofNat k)) (n + 1) (return ())
+ 
+ -- Note that we want to iterate the column values _backwards_, as PPM expects the top rows to come first.
+ def traverse_ {x y : Nat} {A : Type} (m : Matrix (Nat.succ x) (Nat.succ y) A) (act : A → IO Unit) : IO Unit :=
+@@ -126,13 +126,38 @@ def writePPM {x y : Nat} (path : String) (pixels : Matrix (Nat.succ x) (Nat.succ
+   -- Indicates that we are using the ASCII PPM format
+   FS.Handle.putStrLn handle "P3"
+   -- The dimensions of the image, in row column form.
+-  FS.Handle.putStrLn handle $ (toString x) ++ " " ++ (toString y)
++  FS.Handle.putStrLn handle $ (toString (x + 1)) ++ " " ++ (toString (y + 1))
+   -- Channel depth for each pixel
+   FS.Handle.putStrLn handle "255"
+   -- Output all the pixel values
+   traverse_ pixels $ fun pixel => FS.Handle.putStrLn handle $ toString pixel
+   return ()
+ 
+-def main : IO UInt32 := do
+-  writePPM "img.ppm" $ render (Object.sphere 0.5 ⟨ 0, 0, -1.0 ⟩)
++/-- `trace [<path>] [<name>]`: renders the fixed 512x256 image, and prints one
++JSON line of timings, so that the run can be compared with the Rocq one. -/
++def main (args : List String) : IO UInt32 := do
++  let path := args.getD 0 "img.ppm"
++  let name := args.getD 1 "first-light"
++  let pixels := render (Object.sphere 0.5 ⟨ 0, 0, -1.0 ⟩)
++  -- A Matrix is a function, so nothing is computed until a pixel is demanded:
++  -- the timed phase is this one, which demands all of them, and writing the
++  -- file afterwards is outside it (the Rocq side is timed the same way).
++  let acc ← IO.mkRef (#[] : Array Pixel)
++  let tRender ← IO.monoMsNow
++  traverse_ pixels (fun px => acc.modify (·.push px))
++  let renderMs := (← IO.monoMsNow) - tRender
++  let shot ← acc.get
++  FS.withFile path FS.Mode.write fun handle => do
++    FS.Handle.putStrLn handle "P3"
++    FS.Handle.putStrLn handle "512 256"
++    FS.Handle.putStrLn handle "255"
++    for px in shot do
++      FS.Handle.putStrLn handle (toString px)
++  let secs (ms : Nat) : String := toString (Float.ofNat ms / 1000.0)
++  IO.println <| "{\"name\": \"" ++ name ++ "\", \"impl\": \"lean\", \"scene\": 0"
++    ++ ", \"width\": 512, \"height\": 256, \"samples\": 1, \"depth\": 1"
++    ++ ", \"threads\": 1, \"prepare_s\": 0.0"
++    ++ ", \"render_s\": " ++ secs renderMs
++    ++ ", \"total_s\": " ++ secs renderMs
++    ++ ", \"image\": \"" ++ path ++ "\"}"
+   return 0

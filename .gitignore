@@ -39,3 +39,7 @@ Makefile.rocq.conf
 result
 test-results/
 node_modules/
+
+# the benchmark fetches and builds the Lean originals, and writes its images
+bench/vendor/
+bench/results/

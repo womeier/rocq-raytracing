@@ -1,0 +1,155 @@
+diff --git a/Main.lean b/Main.lean
+index 6cd030e..65d911d 100644
+--- a/Main.lean
++++ b/Main.lean
+@@ -241,20 +241,45 @@ def randomScene : IO (Array Hittable) := do
+ 
+   return world
+ 
+-def writeTestImage (filename : String) : IO Unit := do
+-  let width : Nat := 500
+-  let height : Nat := width * 2 / 3
+-  let aspectRatio : Float := (Float.ofNat width) / (Float.ofNat height)
+-  let numThreads := 10
+-  let samplesPerPixel := 8
+-  let maxDepth := 30
++structure RenderOpts where
++  filename : String := "out.ppm"
++  name : String := "render"
++  width : Nat := 500
++  height : Nat := 0          -- 0: width * 2 / 3, as upstream
++  samplesPerPixel : Nat := 8
++  maxDepth : Nat := 30
++  numThreads : Nat := 1      -- 1, so the timing is one core, like the Wasm module
++  scene : Nat := 1           -- 1 the book's 488 spheres, 2 the four-sphere one
++  limit : Nat := 0           -- experiment: keep only the first N spheres
+ 
+-  IO.println s!"{numThreads} threads, {width}x{height} pixels, {numThreads*samplesPerPixel} total samples per pixel, max depth {maxDepth}."
++/-- The small scene of the Rocq port (`Scene.scene_knobs`, with its default
++knobs): a ground sphere and three others, the middle one glass.  Four spheres
++rather than 488, and no random draws, so a render of it is cheap. -/
++def knobScene : Array Hittable := #[
++  .sphere ⟨0, -100, 0⟩ 100 (.lambertian ⟨0.5, 0.5, 0.5⟩),
++  .sphere ⟨0, 1, 0⟩ 1 (.dielectric 1.5),
++  .sphere ⟨0, 1, -2.5⟩ 1 (.lambertian ⟨0.4, 0.2, 0.1⟩),
++  .sphere ⟨0, 1, 2.5⟩ 1 (.metal ⟨0.7, 0.6, 0.5⟩)
++]
++
++def writeTestImage (o : RenderOpts) : IO Unit := do
++  let width : Nat := o.width
++  let height : Nat := if o.height = 0 then width * 2 / 3 else o.height
++  let aspectRatio : Float := (Float.ofNat width) / (Float.ofNat height)
++  let numThreads := o.numThreads
++  let samplesPerPixel := o.samplesPerPixel
++  let maxDepth := o.maxDepth
++  let filename := o.filename
++
++  (← IO.getStderr).putStrLn s!"{numThreads} thread(s), {width}x{height} pixels, {numThreads*samplesPerPixel} samples per pixel, max depth {maxDepth}"
+ 
+   -- Set the seed to something specific for determinism
+   IO.stdGenRef.set mkStdGen
+ 
+-  let world ← randomScene
++  let tPrepare ← IO.monoMsNow
++  let world0 ← if o.scene == 2 then pure knobScene else randomScene
++  let world := if o.limit == 0 then world0 else world0.extract 0 o.limit
++  let prepareMs := (← IO.monoMsNow) - tPrepare
+ 
+   let lookFrom : Vec3 Float := ⟨13, 2, 3⟩
+   let lookAt : Vec3 Float := ⟨0, 0, 0⟩
+@@ -269,7 +294,7 @@ def writeTestImage (filename : String) : IO Unit := do
+     let mut pixels : Array (Color Float) := Array.empty
+     for line in [0:height] do
+       if showProgress then
+-        IO.println s!"line {line+1} of {height}"
++        (← IO.getStderr).putStr s!"\rlean {o.name}: row {line+1} / {height}   "
+       let j := height - line - 1
+       let j' := Float.ofNat j
+       for i in [0:width] do
+@@ -283,20 +308,42 @@ def writeTestImage (filename : String) : IO Unit := do
+         pixels := pixels.push pixelColor
+     return pixels
+ 
+-  IO.println s!"Starting {numThreads} threads."
+-  let mut tasks := Array.empty
+-  for i in [0:numThreads] do
+-    tasks := tasks.push (← IO.asTask (renderTask (i = 0)))
+-
++  let tRender ← IO.monoMsNow
+   let mut pixels : Array (Color Float) := Array.mkArray (height * width) Color.black
+ 
+-  for t in tasks do
+-    let pixels' ← IO.ofExcept (← IO.wait t)
+-    let pixels'' := pixels
+-    for i in [0:height*width] do
+-      pixels := pixels.set! i (pixels'[i]! + pixels''[i]!)
++  if numThreads == 1 then
++    -- The benchmark's case: the render runs inline, so there is no task, no
++    -- thread pool and no averaging pass left in what is being timed.
++    pixels ← renderTask true
++  else
++    -- Upstream: every thread renders the whole image, and the results are
++    -- averaged, which is why the samples per pixel multiply by the count.
++    let mut tasks := Array.empty
++    for i in [0:numThreads] do
++      tasks := tasks.push (← IO.asTask (renderTask (i = 0)))
+ 
+-  IO.println s!"Writing to {filename}"
++    for t in tasks do
++      let pixels' ← IO.ofExcept (← IO.wait t)
++      let pixels'' := pixels
++      for i in [0:height*width] do
++        pixels := pixels.set! i (pixels'[i]! + pixels''[i]!)
++
++  let renderMs := (← IO.monoMsNow) - tRender
++  (← IO.getStderr).putStrLn ""
++
++  -- One JSON line, so that bench/run.mjs can read the timings back.
++  let secs (ms : Nat) : String :=
++    let s := Float.ofNat ms / 1000.0
++    toString ((s * 1000.0).round / 1000.0)
++  IO.println <| "{\"name\": \"" ++ o.name ++ "\", \"impl\": \"lean\", \"scene\": " ++ toString o.scene
++    ++ ", \"width\": " ++ toString width ++ ", \"height\": " ++ toString height
++    ++ ", \"samples\": " ++ toString (samplesPerPixel * numThreads)
++    ++ ", \"depth\": " ++ toString maxDepth
++    ++ ", \"threads\": " ++ toString numThreads
++    ++ ", \"prepare_s\": " ++ secs prepareMs
++    ++ ", \"render_s\": " ++ secs renderMs
++    ++ ", \"total_s\": " ++ secs (prepareMs + renderMs)
++    ++ ", \"image\": \"" ++ filename ++ "\"}"
+ 
+   IO.FS.withFile filename IO.FS.Mode.write fun handle => do
+     handle.putStrLn "P3"
+@@ -305,6 +352,29 @@ def writeTestImage (filename : String) : IO Unit := do
+     for i in [0:height*width] do
+       handle.writeColor <| pixels[i]! / divisor
+ 
+-def main : List String → IO Unit
+-| [] => writeTestImage "out.ppm"
+-| (x::_) => writeTestImage x
++/-- `render --name spheres --scene 2 --width 320 --samples 16 --depth 30
++--threads 1 --out out.ppm` -/
++def parseArgs : List String → RenderOpts → Except String RenderOpts
++  | [], o => .ok o
++  | [k], _ => .error s!"{k} wants a value"
++  | k :: v :: rest, o => do
++    let nat : Except String Nat := match v.toNat? with
++      | some n => .ok n
++      | none => .error s!"{k} wants a number, got {v}"
++    let o ← match k with
++      | "--out" | "--filename" => pure { o with filename := v }
++      | "--name" => pure { o with name := v }
++      | "--width" => pure { o with width := ← nat }
++      | "--height" => pure { o with height := ← nat }
++      | "--samples" => pure { o with samplesPerPixel := ← nat }
++      | "--depth" => pure { o with maxDepth := ← nat }
++      | "--scene" => pure { o with scene := ← nat }
++      | "--limit" => pure { o with limit := ← nat }
++      | "--threads" => pure { o with numThreads := ← nat }
++      | _ => .error s!"unknown option {k}"
++    parseArgs rest o
++
++def main (args : List String) : IO Unit := do
++  match parseArgs args {} with
++  | .error e => throw <| IO.userError e
++  | .ok o => writeTestImage o
