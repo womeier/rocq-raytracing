@@ -17,7 +17,7 @@
 //                                 order, so a byte is 2 * value + 1
 //   block      [tag, fields...]   i32 words at an even address
 //   uint63     an 8-byte little-endian i64 cell, passed as an i32 pointer
-//   Fixed.t    a uint63 holding round(x * 2^24), two's complement
+//   Flt.t      that same cell, read as an f64: a primitive float
 //   record     one block, tag 0, the fields in declaration order
 //   closure    [tag, fidx, env]
 //
@@ -75,19 +75,21 @@ function mkUint63(n) {
   return alloc([Number(v % 2n ** 32n), Number(v / 2n ** 32n)]);
 }
 
-// a fixed-point value is that same cell, holding round(x * 2^24); negative
-// values are the two's complement, which is how Fixed.v reads the word
-function mkFixed(x) {
-  let raw = BigInt(Math.round(x * 16777216));
-  if (raw < 0n) raw += 2n ** 63n;
-  return mkUint63(raw);
+// a Flt.t is that same cell holding binary64 bits (theories/Flt.v), so one
+// setFloat64 is the whole encoding -- the fixed-point port had to scale by
+// 2^24 here and put negative values in two's complement.  alloc reserves the
+// two words and handles the grow; the float then overwrites them.
+function mkFloat(x) {
+  const addr = alloc([0, 0]);
+  view().setFloat64(addr, x, true);
+  return addr;
 }
 
-const mkVec3 = (v) => alloc([0, mkFixed(v[0]), mkFixed(v[1]), mkFixed(v[2])]);
+const mkVec3 = (v) => alloc([0, mkFloat(v[0]), mkFloat(v[1]), mkFloat(v[2])]);
 
 const mkKnobs = (k) => alloc([0,
-  mkVec3(k.cam), mkFixed(k.vfov), mkFixed(k.aperture), mkFixed(k.focus),
-  mkVec3(k.obj), mkFixed(k.radius), mkUint63(k.mat), mkFixed(k.param),
+  mkVec3(k.cam), mkFloat(k.vfov), mkFloat(k.aperture), mkFloat(k.focus),
+  mkVec3(k.obj), mkFloat(k.radius), mkUint63(k.mat), mkFloat(k.param),
   mkVec3(k.albedo)]);
 
 const mkConfig = (c) => alloc([0,

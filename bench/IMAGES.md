@@ -5,6 +5,11 @@ programs it was ported from. Render times are in [`RESULTS.md`](RESULTS.md),
 which is where they belong -- they move a few percent between runs, while
 everything below is deterministic. How to reproduce: [`README.md`](README.md).
 
+> These renders are the **Q38.24 fixed-point build's**. `theories/` now
+> computes in primitive floats and cannot be compiled to Wasm until
+> CertiRocq's backend accepts them, so the images and the differences below
+> have not been re-measured.
+
 | | Rocq (Wasm) | Lean, 1 core | Lean, N cores | difference, x4 |
 |---|---|---|---|---|
 | **`first-light`**<br>512x256<br>1 spp, depth 1<br>mean diff 0.55, max 1 | <img src="results/first-light.rocq.png" width="200" alt="first-light rocq"> | <img src="results/first-light.lean.png" width="200" alt="first-light lean"> | -- | <img src="results/first-light.diff.png" width="200" alt="first-light diff"> |

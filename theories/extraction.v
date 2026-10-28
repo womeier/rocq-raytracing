@@ -14,7 +14,7 @@
 (******************************************************************************)
 
 From Stdlib Require Import Uint63 List Strings.Byte.
-From Raytracing Require Import Fixed Vec3 Random Scene Trig Render.
+From Raytracing Require Import Flt Vec3 Random Scene Trig Render.
 From CertiRocq.Plugin Require Import CertiRocq.
 
 Import ListNotations.

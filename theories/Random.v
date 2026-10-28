@@ -14,7 +14,7 @@
 (*****************************************************************************)
 
 From Stdlib Require Import Uint63.
-From Raytracing Require Import Fixed Vec3.
+From Raytracing Require Import Flt Vec3.
 
 Open Scope uint63_scope.
 
@@ -33,19 +33,27 @@ Definition seed_at (seed x y : int) : int := mix (seed + mix (x + mix y)).
 Definition next (s : int) : int * int :=
   let s' := s + golden in (mix s', s').
 
-(** Uniform in [0, 1): the top 24 bits of the output are the fractional
-    bits of the result. *)
-Definition unit_fx (s : int) : Fixed.t * int :=
-  let (r, s') := next s in (r >> 39, s').
+(** Uniform in [0, 1): the top 53 bits of the generator's output are a
+    non-negative integer below 2^53, which [of_int] carries into a float
+    exactly, and 2^-53 then scales it into the unit interval.  (Both are
+    the widths binary64 allows; the fixed-point port took 24 bits and
+    shifted them into place, which was all Q38.24 could hold.) *)
 
-Import Fixed.FixedNotations.
-Open Scope fixed_scope.
+Definition two_pow_53 : int := 1 << 53.
+
+(* a constant, folded at compile time rather than divided at run time *)
+Definition scale53 : Flt.t := Eval compute in Flt.div 1 (Flt.of_int two_pow_53).
+
+Definition unit_flt (s : int) : Flt.t * int :=
+  let (r, s') := next s in (Flt.mul (Flt.of_int (r >> 10)) scale53, s').
+
+Open Scope float_scope.
 
 (** Uniform in [lo, hi). *)
-Definition range (lo hi : Fixed.t) (s : int) : Fixed.t * int :=
-  let (u, s1) := unit_fx s in (lo + (hi - lo) * u, s1).
+Definition range (lo hi : Flt.t) (s : int) : Flt.t * int :=
+  let (u, s1) := unit_flt s in (lo + (hi - lo) * u, s1).
 
-Definition vec_range (lo hi : Fixed.t) (s : int) : vec3 * int :=
+Definition vec_range (lo hi : Flt.t) (s : int) : vec3 * int :=
   let (x, s1) := range lo hi s in
   let (y, s2) := range lo hi s1 in
   let (z, s3) := range lo hi s2 in
@@ -58,7 +66,7 @@ Fixpoint in_unit_sphere_fuel (n : nat) (s : int) : vec3 * int :=
   | O => (V3 1 0 0, s)
   | S n' =>
       let (p, s1) := vec_range (-1) 1 s in
-      if Fixed.ltb (Vec3.length_squared p) 1 then (p, s1)
+      if Flt.ltb (Vec3.length_squared p) 1 then (p, s1)
       else in_unit_sphere_fuel n' s1
   end.
 
@@ -71,7 +79,7 @@ Fixpoint in_unit_disk_fuel (n : nat) (s : int) : vec3 * int :=
       let (x, s1) := range (-1) 1 s in
       let (y, s2) := range (-1) 1 s1 in
       let p := V3 x y 0 in
-      if Fixed.ltb (Vec3.length_squared p) 1 then (p, s2)
+      if Flt.ltb (Vec3.length_squared p) 1 then (p, s2)
       else in_unit_disk_fuel n' s2
   end.
 

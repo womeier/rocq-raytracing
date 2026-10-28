@@ -77,16 +77,24 @@ In `bench/results/` (git-ignored):
 | `results.json` | every timing, the allocation totals, the comparison statistics |
 | `results.md` | the table |
 
-The PNGs are committed; the PPMs they are made from are not.
+The PNGs are committed; the PPMs they are made from are not. Both they and
+every number here come from the Q38.24 fixed-point build: the benchmark needs
+a Wasm module, and the float port cannot be compiled to one until CertiRocq's
+backend accepts floats (see the repository README).
 
-The two images cannot agree bit for bit: the Rocq renderer computes in Q38.24
-fixed point (`theories/Fixed.v`) where Lean uses IEEE doubles, and it draws
-from SplitMix (`theories/Random.v`) where Lean uses `IO.stdGenRef`. So the
-comparison says three different things depending on the example:
+Both sides now compute in IEEE doubles -- `theories/Flt.v` is
+`Corelib.Floats.PrimFloat` -- but the Rocq renderer draws from SplitMix
+(`theories/Random.v`) where Lean uses `IO.stdGenRef`, so a sampled image still
+cannot match. The comparison says three different things depending on the
+example:
 
-* `first-light` does no sampling, so the two differ by at most **one level in
-  255**, over the whole image. That is the real check on `Fixed.v`: the
-  fixed-point arithmetic lands on the same colours as the doubles do.
+* `first-light` does no sampling, so nothing but the arithmetic separates the
+  two, and they differ by at most **one level in 255** over the whole image.
+  That was the check that Q38.24 fixed point landed where the doubles do;
+  what is worth noticing is that the float port did not improve it. The
+  residual is the order of evaluation, not the number format -- the two
+  programs associate the same expressions differently and round at different
+  points -- and one level out of 255 is what that costs.
 * the `spheres-` examples are the same four spheres seen through the same
   camera, but sampled along different random sequences, so they differ the way
   two renders of one scene with different seeds do -- the same picture,

@@ -1,6 +1,11 @@
 -Q theories Raytracing
 
-theories/Fixed.v
+# Every decimal in the port is a literal of the Lean original, so one that
+# is not exactly a binary64 value is meant to round to the nearest -- which
+# is what the original's own compiler does with it.  Warning off.
+-arg -w -arg -inexact-float
+
+theories/Flt.v
 theories/Trig.v
 theories/Vec3.v
 theories/Random.v

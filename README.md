@@ -9,6 +9,30 @@ These are inspired by the book *Ray Tracing in One Weekend*.
 
 The project is compiled to a single Wasm module by [CertiRocq](https://github.com/CertiCoq/certicoq).
 
+## Status: waiting on float support in the backend
+
+The renderer computes in primitive floats -- `Corelib.Floats.PrimFloat`, IEEE
+754 binary64, the same arithmetic as the Lean original. CertiRocq's Wasm
+backend does not accept them yet, so `theories/` compiles and its tests pass
+but the last step does not:
+
+```
+theories/extraction.v: Could not compile:
+  Unsupported primitive operator: Corelib.Floats.PrimFloat.ltb
+```
+
+Everything up to that point goes through, including MetaRocq's quoting and
+erasure. The module reaches exactly nine float primitives -- `fadd`, `fsub`,
+`fmul`, `fdiv`, `fopp`, `fabs`, `fsqrt`, `flt`, `float_of_int` -- plus float
+constants; [`FUTURE.md`](FUTURE.md) has the mapping onto Wasm and what else
+the backend needs.
+
+So until that lands, `nix build` and `nix run` stop at the same place, and the
+Pages workflow with them -- the live demo and the images and numbers in
+[`bench/`](bench/) are all the earlier Q38.24 fixed-point build. `make
+theories/Tests.vo` is the part that does work, and is the way to check this
+port.
+
 ## Running locally
 
 ```sh
@@ -19,13 +43,13 @@ nix run
 
 | | |
 |---|---|
-| `theories/Fixed.v` | Q38.24 fixed point on `int63`, including decimal literals |
+| `theories/Flt.v` | the scalar layer: the `PrimFloat` primitives the renderer uses, `min`/`max`, and the one float-to-int conversion |
 | `theories/Trig.v` | sine, cosine and tangent, for the camera's field of view |
 | `theories/Vec3.v` | vectors and colours |
 | `theories/Random.v` | SplitMix, replacing the Lean original's `IO` randomness |
 | `theories/Scene.v` | rays, camera, materials, spheres, `ray_color`, and the three scenes |
 | `theories/Render.v` | sampling, gamma, PPM output, jobs |
-| `theories/Proofs.v` | the output-shape theorem, and the arithmetic specs |
+| `theories/Proofs.v` | the output-shape theorem, and what `Flt.v`'s own three operations mean |
 | `theories/Tests.v` | expectations checked by conversion at build time |
 | `theories/extraction.v` | the three entry points, and `CertiRocq Compile Wasm` |
 | `src/` | the browser front end: renders onto a canvas, with controls |
@@ -33,16 +57,28 @@ nix run
 | `FUTURE.md` | what it would take to close the performance gap, and what that is worth |
 
 Everything the controls set is a field of `Scene.knobs`, which `prepare` reads;
-the host writes those fields as fixed-point words (`round(x * 2^24)`), so the
-JavaScript never has to agree with the module about anything but the layout of
-a record.
+the host writes those fields with `setFloat64`, so the JavaScript never has to
+agree with the module about anything but the layout of a record.
 
 
 ## Float representation
-The CertiRocq's Wasm backend doesn't support primitive floats.
-Primitive 63-bit integers are supported, so `Fixed.t` is an `int63` read as a
-two's-complement signed integer scaled by 2^24: resolution 6e-8, range +-2.7e11.
-See the number format [Q38.24](https://en.wikipedia.org/wiki/Q_(number_format)).
+`Flt.t` is `Corelib.Floats.PrimFloat.float`: IEEE 754 binary64, the kernel's
+own primitive, represented at run time as the same 8-byte heap cell as an
+`int63`. `theories/Flt.v` adds only what PrimFloat lacks and the renderer
+needs: `min` and `max`, and `trunc_byte`, the single place a float becomes an
+integer. Everything else is the primitive itself, reached through the decimal
+literals and infix operators of `float_scope`.
+
+PrimFloat has no transcendental function, so `theories/Trig.v` still computes
+the camera's `tan(vfov/2)` from a Taylor series; it now carries enough terms
+to land within an ulp of `libm` on the interval it is used over.
+
+The first port of this renderer computed in
+[Q38.24](https://en.wikipedia.org/wiki/Q_(number_format)) fixed point on
+`int63` instead -- resolution 6e-8, range +-2.7e11 -- because the backend
+rejects floats. Several of the tests in `theories/Tests.v` are the equations
+that port made, now landing exactly: a normalised vector is of unit length,
+`sqrt 1e-4` is `0.01`, `1/1000000` is `1e-6`.
 
 ## The host interface
 The module exposes three entry points in one record, so that a single Wasm module
@@ -68,11 +104,48 @@ The displayed linear memory usage is the maximum (across all jobs) required to c
 Theorem render_length (sd : scene_data) (j : job) :
   List.length (render (sd, j)) = 3 * nat_of_int (job_count j).
 ```
-Further, there are a few admitted statements about the custom float.
+It also proves that `Flt.trunc_byte` -- the renderer's one float-to-int
+conversion, a binary search on the eight bits of a clamped colour channel --
+only ever sets those eight, so the byte it produces loses nothing, and that
+`Flt.min` and `Flt.max` return one of their arguments (the property that
+rules out compiling them to Wasm's `f64.min`/`f64.max`, which canonicalise
+NaN).
 
-[`FUTURE.md`](FUTURE.md) collects what remains: primitive float support in the
-backend, with the operation table the port would need; not boxing primitive
-intermediates; and what each is estimated to be worth.
+The fourteen admitted statements the fixed-point port needed here are gone
+with it. They said what each signed operation derived from the unsigned
+`int63` primitives computed; the float port takes that from the kernel, where
+`Stdlib.Floats.FloatAxioms` specifies `add`, `sub`, `mul`, `div`, `sqrt` and
+the comparisons.
+
+What is there instead is a set of **statements, Admitted**, of what would be
+worth proving about this renderer rather than about its arithmetic -- grouped
+by what each needs, with the reasoning in the comments. Three things worth
+knowing from having written them down:
+
+* `spans_compose` -- that cutting a row into jobs does not change the row --
+  is the property both hosts rely on when they size a span to a memory
+  budget, and it needs no float reasoning at all. `Tests.v` checks one
+  instance of it by computation.
+* `Render.channel_byte` is total, and **because** of the argument order in
+  `Flt.min` and `Flt.max`: a NaN channel survives the `max` and is caught by
+  the `min`. Swap either branch and a NaN reaches `trunc_byte`, which is
+  specified only on `[0, 256)`. NaN comes out 255, `+inf` 255, `-inf` 0.
+* the obvious claim that `ray_color` returns a colour in gamut is **false**,
+  twice, and the comments name both escapes -- the sky gradient's parameter
+  can slip an ulp outside `[0, 1]`, and `Vec3.normalized` of the zero vector
+  is `0 / 0`, which `Vec3.near_zero` does not catch. So the clamp is
+  load-bearing, which is the opposite of what one sets out to prove.
+
+The real-valued accuracy of `Trig.v`'s series is stated in Flocq's terms
+(`Prim2B`, `ulp`), since Flocq is already in the dependency closure. That
+group is a project rather than an afternoon, and the one `Admitted` the port
+inherited -- that `trunc_byte` is the floor -- is not: it is
+`Flocq.Prop.Sterbenz.sterbenz` applied to the invariant `Flt.v` already
+states in prose.
+
+[`FUTURE.md`](FUTURE.md) collects what remains: the float support the backend
+still needs, with the operation table; not boxing primitive intermediates;
+and what each is estimated to be worth.
 
 
 ## Testing
@@ -83,7 +156,9 @@ PPM output still produce the expected values.
 
 On top of that, `bench/` renders four examples with this project and with the
 two Lean programs it was ported from, times both and compares the images
-(`bench/README.md`):
+(`bench/README.md`). It needs a Wasm module, so it cannot run on the float
+port until the backend compiles one; **the numbers below are the fixed-point
+build's** and are kept as the baseline to beat:
 
 ```sh
 make bench-setup     # clone and build the Lean originals (needs the network)
@@ -106,16 +181,16 @@ hurts the book's one -- the world is shared with the tasks, so every sphere a
 ray sweep touches is reference-counted atomically, which `bench/RESULTS.md`
 measures. The "mean diff" is the average per-channel distance out of 255
 between the two images. On `first-light`, which does no sampling, no channel
-anywhere is off by more than **one**: that is the check that Q38.24 fixed point
-lands where the doubles do. The sampled scenes draw from different generators,
-so they differ as two seeds of one scene do -- and the weekend scene *builds*
-its 488 spheres from the generator, so there the two are not even the same
-world. The numbers, and where the time goes, are in
+anywhere was off by more than **one**, which was the check that Q38.24 fixed
+point landed where the doubles do; with the float port the two sides are doing
+the same arithmetic, so that row is the one to watch. The sampled scenes draw
+from different generators, so they differ as two seeds of one scene do -- and
+the weekend scene *builds* its 488 spheres from the generator, so there the two
+are not even the same world. The numbers, and where the time goes, are in
 [`bench/RESULTS.md`](bench/RESULTS.md).
 
 
 ## Differences from the Lean original
-- Floats become Q38.24 fixed point.
 - `IO` randomness becomes an explicit SplitMix state threaded through sampling;
   a function returning `a` in Lean returns `(a, state)` here.
 - Lean renders the whole image in one go, in parallel `Task`s; here a call

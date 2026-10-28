@@ -5,24 +5,22 @@
 (*  Tracing in One Weekend), with the simple normal-shaded scene of          *)
 (*  TOTBWF/lean4-raytrace as a second, cheap scene.                          *)
 (*                                                                           *)
-(*  Two systematic differences from the Lean code:                           *)
-(*   - the component type is Fixed.t, not Float (see Fixed.v);               *)
-(*   - sampling functions take and return a generator state instead of       *)
-(*     living in IO (see Random.v).                                          *)
+(*  One systematic difference from the Lean code: sampling functions take    *)
+(*  and return a generator state instead of living in IO (see Random.v).     *)
+(*  The arithmetic is the original's, binary64 (see Flt.v).                  *)
 (*****************************************************************************)
 
 From Stdlib Require Import Uint63 List.
-From Raytracing Require Import Fixed Trig Vec3 Random.
+From Raytracing Require Import Flt Trig Vec3 Random.
 
 Import ListNotations.
-Import Fixed.FixedNotations.
-Open Scope fixed_scope.
+Open Scope float_scope.
 
 (** ** Rays *)
 
 Record ray : Set := MkRay { ray_origin : vec3; ray_dir : vec3 }.
 
-Definition ray_at (r : ray) (t : Fixed.t) : vec3 :=
+Definition ray_at (r : ray) (t : Flt.t) : vec3 :=
   Vec3.add (ray_origin r) (Vec3.scale t (ray_dir r)).
 
 (** ** Camera
@@ -38,11 +36,11 @@ Record camera : Set := MkCamera {
   cam_u           : vec3;   (* right *)
   cam_v           : vec3;   (* up *)
   cam_w           : vec3;   (* back *)
-  cam_lens_radius : Fixed.t
+  cam_lens_radius : Flt.t
 }.
 
 Definition camera_make (lookfrom lookat vup : vec3)
-                       (half_height aspect aperture focus_dist : Fixed.t) : camera :=
+                       (half_height aspect aperture focus_dist : Flt.t) : camera :=
   let viewport_height := 2 * half_height in
   let viewport_width := aspect * viewport_height in
   let w := Vec3.normalized (Vec3.sub lookfrom lookat) in
@@ -56,7 +54,7 @@ Definition camera_make (lookfrom lookat vup : vec3)
              (Vec3.scale focus_dist w) in
   MkCamera lookfrom lower_left horizontal vertical u v w (aperture / 2).
 
-Definition camera_ray (c : camera) (s t : Fixed.t) (g : int) : ray * int :=
+Definition camera_ray (c : camera) (s t : Flt.t) (g : int) : ray * int :=
   let (rd0, g1) := Random.in_unit_disk g in
   let rd := Vec3.scale (cam_lens_radius c) rd0 in
   let offset := Vec3.add (Vec3.scale (vx rd) (cam_u c))
@@ -73,8 +71,8 @@ Definition camera_ray (c : camera) (s t : Fixed.t) (g : int) : ray * int :=
 
 Inductive material : Set :=
   | Lambertian (albedo : color)
-  | Metal (albedo : color) (fuzz : Fixed.t)
-  | Dielectric (index_of_refraction : Fixed.t)
+  | Metal (albedo : color) (fuzz : Flt.t)
+  | Dielectric (index_of_refraction : Flt.t)
   | Sky.
 
 Inductive material_response : Set :=
@@ -85,18 +83,18 @@ Definition absorb : material_response := Emit Vec3.black.
 
 Record hit_record : Set := MkHit {
   hit_p          : vec3;
-  hit_t          : Fixed.t;
+  hit_t          : Flt.t;
   hit_material   : material;
   hit_normal     : vec3;
   hit_front_face : bool
 }.
 
-Definition hit_with_normal (p : vec3) (t : Fixed.t) (m : material)
+Definition hit_with_normal (p : vec3) (t : Flt.t) (m : material)
                            (dir outward_normal : vec3) : hit_record :=
-  let front := Fixed.ltb (Vec3.dot dir outward_normal) 0 in
+  let front := Flt.ltb (Vec3.dot dir outward_normal) 0 in
   MkHit p t m (if front then outward_normal else Vec3.neg outward_normal) front.
 
-Definition pow5 (x : Fixed.t) : Fixed.t := let x2 := x * x in x2 * x2 * x.
+Definition pow5 (x : Flt.t) : Flt.t := let x2 := x * x in x2 * x2 * x.
 
 Definition scatter (h : hit_record) (r : ray) (g : int) : material_response * int :=
   match hit_material h with
@@ -109,21 +107,26 @@ Definition scatter (h : hit_record) (r : ray) (g : int) : material_response * in
       let reflected := Vec3.reflect (Vec3.normalized (ray_dir r)) (hit_normal h) in
       let (p, g1) := Random.in_unit_sphere g in
       let scattered := MkRay (hit_p h) (Vec3.add reflected (Vec3.scale fuzz p)) in
-      (if Fixed.ltb 0 (Vec3.dot (ray_dir scattered) (hit_normal h))
+      (if Flt.ltb 0 (Vec3.dot (ray_dir scattered) (hit_normal h))
        then Scatter albedo scattered
        else absorb, g1)
   | Dielectric ir =>
       let ratio := if hit_front_face h then 1 / ir else ir in
       let unit_dir := Vec3.normalized (ray_dir r) in
-      let cos_theta := Fixed.min (- Vec3.dot unit_dir (hit_normal h)) 1 in
-      let sin_theta := Fixed.sqrt (1 - cos_theta * cos_theta) in
-      let cannot_refract := Fixed.ltb 1 (ratio * sin_theta) in
+      let cos_theta := Flt.min (- Vec3.dot unit_dir (hit_normal h)) 1 in
+      (* cos_theta is at most 1 but, the normal and the direction being only
+         approximately unit vectors, can fall just below -1, and then this
+         square root is NaN.  It reaches nothing but the comparison below,
+         where NaN is not less than anything, so the ray refracts -- which
+         is what the sign of a cosine that close to -1 asks for anyway. *)
+      let sin_theta := Flt.sqrt (1 - cos_theta * cos_theta) in
+      let cannot_refract := Flt.ltb 1 (ratio * sin_theta) in
       (* Schlick's approximation *)
       let r0' := (1 - ratio) / (1 + ratio) in
       let r0 := r0' * r0' in
       let reflectance := r0 + (1 - r0) * pow5 (1 - cos_theta) in
-      let (u, g1) := Random.unit_fx g in
-      let dir := if orb cannot_refract (Fixed.ltb u reflectance)
+      let (u, g1) := Random.unit_flt g in
+      let dir := if orb cannot_refract (Flt.ltb u reflectance)
                  then Vec3.reflect unit_dir (hit_normal h)
                  else Vec3.refract unit_dir (hit_normal h) ratio in
       (Scatter Vec3.white (MkRay (hit_p h) dir), g1)
@@ -136,11 +139,11 @@ Definition scatter (h : hit_record) (r : ray) (g : int) : material_response * in
 
 (** ** Spheres *)
 
-Inductive hittable : Set := Sphere (center : vec3) (radius : Fixed.t) (mat : material).
+Inductive hittable : Set := Sphere (center : vec3) (radius : Flt.t) (mat : material).
 
 (* Keeps the closest hit so far in [h], exactly like the Lean version:
    a miss returns [h] unchanged. *)
-Definition hit (obj : hittable) (r : ray) (a : Fixed.t) (tmin : Fixed.t)
+Definition hit (obj : hittable) (r : ray) (a : Flt.t) (tmin : Flt.t)
                (h : hit_record) : hit_record :=
   match obj with
   | Sphere center radius m =>
@@ -148,15 +151,15 @@ Definition hit (obj : hittable) (r : ray) (a : Fixed.t) (tmin : Fixed.t)
       let half_b := Vec3.dot oc (ray_dir r) in
       let c := Vec3.length_squared oc - radius * radius in
       let discr := half_b * half_b - a * c in
-      if Fixed.ltb discr 0 then h
+      if Flt.ltb discr 0 then h
       else
-        let sqrtd := Fixed.sqrt discr in
+        let sqrtd := Flt.sqrt discr in
         (* the nearest root in the acceptable range *)
         let root1 := (- half_b - sqrtd) / a in
-        let root := if orb (Fixed.ltb root1 tmin) (Fixed.ltb (hit_t h) root1)
+        let root := if orb (Flt.ltb root1 tmin) (Flt.ltb (hit_t h) root1)
                     then (- half_b + sqrtd) / a
                     else root1 in
-        if orb (Fixed.ltb root tmin) (Fixed.ltb (hit_t h) root) then h
+        if orb (Flt.ltb root tmin) (Flt.ltb (hit_t h) root) then h
         else
           let p := ray_at r root in
           let outward_normal := Vec3.divs (Vec3.sub p center) radius in
@@ -164,8 +167,10 @@ Definition hit (obj : hittable) (r : ray) (a : Fixed.t) (tmin : Fixed.t)
   end.
 
 (* [a] is the same for every object of the list, so it is computed once
-   here rather than inside each sphere test. *)
-Definition hit_list (world : list hittable) (r : ray) (tmin tmax : Fixed.t) : hit_record :=
+   here rather than inside each sphere test.  It is the squared length of
+   the ray's direction, which both callers keep away from zero -- the
+   quotients in [hit] divide by it. *)
+Definition hit_list (world : list hittable) (r : ray) (tmin tmax : Flt.t) : hit_record :=
   let a := Vec3.length_squared (ray_dir r) in
   fold_left (fun h obj => hit obj r a tmin h)
             world
@@ -181,7 +186,7 @@ Fixpoint ray_color (world : list hittable) (depth : nat) (r : ray) (acc : color)
   match depth with
   | O => (Vec3.black, g)   (* bounce limit reached, no more light gathered *)
   | S depth' =>
-      let h := hit_list world r 0.001 Fixed.max_val in
+      let h := hit_list world r 0.001 Flt.infinity in
       let (resp, g1) := scatter h r g in
       match resp with
       | Emit c => (Vec3.mul acc c, g1)
@@ -197,12 +202,12 @@ Fixpoint ray_color (world : list hittable) (depth : nat) (r : ray) (acc : color)
     -11; the same spheres come out here from the same loop bounds. *)
 
 Definition small_sphere (center : vec3) (g : int) : hittable * int :=
-  let (choose, g1) := Random.unit_fx g in
-  if Fixed.ltb choose 0.9 then
+  let (choose, g1) := Random.unit_flt g in
+  if Flt.ltb choose 0.9 then
     let (a1, g2) := Random.vec_range 0 1 g1 in
     let (a2, g3) := Random.vec_range 0 1 g2 in
     (Sphere center 0.2 (Lambertian (Vec3.mul a1 a2)), g3)
-  else if Fixed.ltb choose 0.95 then
+  else if Flt.ltb choose 0.95 then
     let (albedo, g2) := Random.vec_range 0.5 1 g1 in
     let (fuzz, g3) := Random.range 0 0.5 g2 in
     (Sphere center 0.2 (Metal albedo fuzz), g3)
@@ -210,16 +215,16 @@ Definition small_sphere (center : vec3) (g : int) : hittable * int :=
     (Sphere center 0.2 (Dielectric 1.5), g1).
 
 (* one cell (a, b) of the 22x22 grid *)
-Definition scene_cell (a b : Fixed.t) (g : int) : list hittable * int :=
-  let (ra, g1) := Random.unit_fx g in
-  let (rb, g2) := Random.unit_fx g1 in
+Definition scene_cell (a b : Flt.t) (g : int) : list hittable * int :=
+  let (ra, g1) := Random.unit_flt g in
+  let (rb, g2) := Random.unit_flt g1 in
   let center := V3 (a + 0.9 * ra) 0.2 (b + 0.9 * rb) in
-  if Fixed.ltb 0.9 (Vec3.length (Vec3.sub center (V3 4 0.2 0)))
+  if Flt.ltb 0.9 (Vec3.length (Vec3.sub center (V3 4 0.2 0)))
   then let (s, g3) := small_sphere center g2 in ([s], g3)
   else ([], g2).
 
 (* b from -11 to 10 for a fixed a *)
-Fixpoint scene_row (n : nat) (a b : Fixed.t) (g : int) : list hittable * int :=
+Fixpoint scene_row (n : nat) (a b : Flt.t) (g : int) : list hittable * int :=
   match n with
   | O => ([], g)
   | S n' =>
@@ -228,7 +233,7 @@ Fixpoint scene_row (n : nat) (a b : Fixed.t) (g : int) : list hittable * int :=
       (here ++ rest, g2)
   end.
 
-Fixpoint scene_grid (n : nat) (a : Fixed.t) (g : int) : list hittable * int :=
+Fixpoint scene_grid (n : nat) (a : Flt.t) (g : int) : list hittable * int :=
   match n with
   | O => ([], g)
   | S n' =>
@@ -255,13 +260,13 @@ Definition scene_weekend (g : int) : list hittable * int :=
 
 Record knobs : Set := MkKnobs {
   kn_cam      : vec3;      (* where the camera is *)
-  kn_vfov     : Fixed.t;   (* vertical field of view, in degrees *)
-  kn_aperture : Fixed.t;
-  kn_focus    : Fixed.t;   (* distance to the focal plane *)
+  kn_vfov     : Flt.t;   (* vertical field of view, in degrees *)
+  kn_aperture : Flt.t;
+  kn_focus    : Flt.t;   (* distance to the focal plane *)
   kn_centre   : vec3;      (* the movable sphere *)
-  kn_radius   : Fixed.t;
+  kn_radius   : Flt.t;
   kn_mat      : int;       (* 0 diffuse, 1 metal, anything else glass *)
-  kn_param    : Fixed.t;   (* the metal's fuzz, or the glass's refractive index *)
+  kn_param    : Flt.t;   (* the metal's fuzz, or the glass's refractive index *)
   kn_albedo   : color
 }.
 
@@ -284,8 +289,8 @@ Definition scene_knobs (k : knobs) : list hittable :=
 
 (* The camera of a set of knobs.  camera_make wants the half-height of the
    viewport at unit distance, which is the tangent of half the field of
-   view; tan_deg is exact enough for that and keeps floats out of it. *)
-Definition knob_camera (k : knobs) (aspect : Fixed.t) : camera :=
+   view; PrimFloat has no tangent, so Trig.tan_deg computes it. *)
+Definition knob_camera (k : knobs) (aspect : Flt.t) : camera :=
   camera_make (kn_cam k) (V3 0 0 0) (V3 0 1 0)
               (Trig.tan_deg (kn_vfov k / 2)) aspect
               (kn_aperture k) (kn_focus k).
@@ -297,9 +302,9 @@ Definition knob_camera (k : knobs) (aspect : Fixed.t) : camera :=
 
 Definition trace_sphere : hittable := Sphere (V3 0 0 (-1)) 0.5 (Lambertian Vec3.white).
 
-Definition trace_color (world : list hittable) (u v : Fixed.t) : color :=
+Definition trace_color (world : list hittable) (u v : Flt.t) : color :=
   let r := MkRay Vec3.zero (V3 (4 * u - 2) (2 * v - 1) (-1)) in
-  let h := hit_list world r 0.001 Fixed.max_val in
+  let h := hit_list world r 0.001 Flt.infinity in
   match hit_material h with
   | Sky =>
       let unit := Vec3.normalized (ray_dir r) in

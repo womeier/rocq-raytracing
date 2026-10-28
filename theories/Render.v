@@ -12,7 +12,7 @@
 (******************************************************************************)
 
 From Stdlib Require Import Uint63 List Strings.Byte.
-From Raytracing Require Import Fixed Vec3 Random Scene Trig.
+From Raytracing Require Import Flt Vec3 Random Scene Trig.
 
 Import ListNotations.
 Open Scope uint63_scope.
@@ -90,28 +90,28 @@ Definition ppm_header (cfg : config) : list byte :=
 
 (** ** Pixels *)
 
-Import Fixed.FixedNotations.
-Open Scope fixed_scope.
+Open Scope float_scope.
 
 (* A channel of the accumulated colour as a byte.  gamma = 2, i.e. the
-   square root, as in the original; clamping before the conversion keeps
-   the result in [0, 255]. *)
-Definition channel_byte (gamma : bool) (v : Fixed.t) : byte :=
-  let s := if gamma then Fixed.sqrt v else v in
-  byte_of_int (Fixed.floor_to_int (256 * Fixed.min (Fixed.max s 0) 0.999999)).
+   square root, as in the original.  The clamp puts the scaled value in
+   [0, 256), which is the range Flt.trunc_byte -- the renderer's one
+   float-to-int conversion -- is built for. *)
+Definition channel_byte (gamma : bool) (v : Flt.t) : byte :=
+  let s := if gamma then Flt.sqrt v else v in
+  byte_of_int (Flt.trunc_byte (256 * Flt.min (Flt.max s 0) 0.999999)).
 
 Definition color_bytes (gamma : bool) (c : color) : list byte :=
   [channel_byte gamma (vx c); channel_byte gamma (vy c); channel_byte gamma (vz c)].
 
 (* One supersampling pass per step, jittered inside the pixel. *)
 Fixpoint sample_loop (n depth : nat) (world : list hittable) (cam : camera)
-                     (xf yf wf hf : Fixed.t) (acc : color) (g : int)
+                     (xf yf wf hf : Flt.t) (acc : color) (g : int)
                      : color * int :=
   match n with
   | O => (acc, g)
   | S n' =>
-      let (du, g1) := Random.unit_fx g in
-      let (dv, g2) := Random.unit_fx g1 in
+      let (du, g1) := Random.unit_flt g in
+      let (dv, g2) := Random.unit_flt g1 in
       let u := (xf + du) / wf in
       let v := (yf + dv) / hf in
       let (r, g3) := Scene.camera_ray cam u v g2 in
@@ -126,16 +126,16 @@ Definition pixel_weekend (cfg : config) (world : list hittable) (cam : camera)
   let j := (cfg_height cfg - 1 - y)%uint63 in
   let (sum, _) :=
     sample_loop (nat_of_int samples) (nat_of_int (cfg_depth cfg)) world cam
-      (Fixed.of_int x) (Fixed.of_int j)
-      (Fixed.of_int (cfg_width cfg)) (Fixed.of_int (cfg_height cfg))
+      (Flt.of_int x) (Flt.of_int j)
+      (Flt.of_int (cfg_width cfg)) (Flt.of_int (cfg_height cfg))
       Vec3.black (Random.seed_at (cfg_seed cfg) x y) in
-  color_bytes true (Vec3.divs sum (Fixed.of_int samples)).
+  color_bytes true (Vec3.divs sum (Flt.of_int samples)).
 
 (* The first-light scene: no sampling, no bounces, and no gamma -- the
    colour is the surface normal, which gamma would only wash out. *)
 Definition pixel_trace (cfg : config) (world : list hittable) (x y : int) : list byte :=
-  let u := Fixed.of_int x / Fixed.of_int (cfg_width cfg) in
-  let v := Fixed.of_int (cfg_height cfg - 1 - y)%uint63 / Fixed.of_int (cfg_height cfg) in
+  let u := Flt.of_int x / Flt.of_int (cfg_width cfg) in
+  let v := Flt.of_int (cfg_height cfg - 1 - y)%uint63 / Flt.of_int (cfg_height cfg) in
   color_bytes false (Scene.trace_color world u v).
 
 (** ** Jobs *)
@@ -149,7 +149,7 @@ Fixpoint span_loop (n : nat) (f : int -> list byte) (x : int) : list byte :=
 (* Every scene but the first-light one is viewed through the same camera,
    which the knobs describe; the defaults are the book's. *)
 Definition config_camera (cfg : config) : camera :=
-  let aspect := Fixed.of_int (cfg_width cfg) / Fixed.of_int (cfg_height cfg) in
+  let aspect := Flt.of_int (cfg_width cfg) / Flt.of_int (cfg_height cfg) in
   Scene.knob_camera (cfg_knobs cfg) aspect.
 
 (** The world and the camera of a configuration, built once. *)

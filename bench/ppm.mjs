@@ -4,9 +4,9 @@
 //   node bench/ppm.mjs diff rocq.ppm lean.ppm [diff.png]
 //
 // The Rocq module writes P6 (binary), the Lean programs write P3 (ASCII);
-// both are read here.  `diff` prints one JSON object: the two images cannot
-// agree bit for bit -- fixed point against IEEE doubles, SplitMix against
-// Lean's stdGen -- so what it reports is how far apart they are.
+// both are read here.  `diff` prints one JSON object: a sampled image cannot
+// agree bit for bit -- SplitMix against Lean's stdGen -- so what it reports is
+// how far apart the two are.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { encodePNG } from "./png.mjs";

@@ -3,6 +3,13 @@
 AMD Ryzen 5 PRO 7540U (12 threads), node v24.21.0, 2026-10-15. Reproduce with
 `make bench-setup && make bench` -- about two minutes.
 
+> This run measured the **Q38.24 fixed-point build**, which is what the
+> committed `.wasm` still is. `theories/` has since been ported to primitive
+> floats and cannot be compiled to Wasm until CertiRocq's backend accepts
+> them, so everything below stands as the baseline rather than as a
+> description of the current sources. Where it names `theories/Fixed.v`, the
+> file is now `theories/Flt.v` and says much less.
+
 | example | scene | size | spp | depth | Rocq (Wasm) | Lean, 1 core | Lean, N cores | Rocq / Lean | allocated | mean diff | max diff |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `first-light` | normal-shaded sphere | 512x256 | 1 | 1 | 0.38 s | 0.25 s | -- | 1.5x | 0.5 GB | 0.55 | **1** |
