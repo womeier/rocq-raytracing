@@ -3,12 +3,13 @@
 AMD Ryzen 5 PRO 7540U (12 threads), node v24.21.0, 2026-10-15. Reproduce with
 `make bench-setup && make bench` -- about two minutes.
 
-> This run measured the **Q38.24 fixed-point build**, which is what the
-> committed `.wasm` still is. `theories/` has since been ported to primitive
-> floats and cannot be compiled to Wasm until CertiRocq's backend accepts
-> them, so everything below stands as the baseline rather than as a
+> The **Wasm** column measured the Q38.24 fixed-point build, which is what
+> the committed `.wasm` still is. `theories/` has since been ported to
+> primitive floats and cannot be compiled to Wasm until CertiRocq's backend
+> accepts them, so that column stands as the baseline rather than as a
 > description of the current sources. Where it names `theories/Fixed.v`, the
-> file is now `theories/Flt.v` and says much less.
+> file is now `theories/Flt.v` and says much less. The float port's own
+> numbers, through the OCaml extraction, are in the next section.
 
 | example | scene | size | spp | depth | Rocq (Wasm) | Lean, 1 core | Lean, N cores | Rocq / Lean | allocated | mean diff | max diff |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -33,6 +34,51 @@ linear memory stays at 2-250 MB.
 The images are in `bench/results/` (`<name>.rocq.png`, `<name>.lean.png`,
 `<name>.lean-mt.png`, and `<name>.diff.png`, the per-channel difference
 multiplied by 4). [`IMAGES.md`](IMAGES.md) shows them side by side.
+
+## The float port, through the OCaml extraction
+
+Same machine, 2026-10-28, `make bench-ocaml` for the Rocq column and the
+Lean binaries in the same run so that the ratio is not across runs. No Wasm
+column: the backend cannot build one from these sources yet. This is
+`theories/` compiled by Rocq's own extraction (`bench/ocaml/`), which is
+the same program the Wasm module would be -- the same `Fixpoint`s, the same
+unary `nat` counters, the same cons-list output -- with a mature backend
+and a generational GC under it.
+
+| example | size | spp | depth | Rocq (OCaml) | Lean, 1 core | Lean, N cores | Rocq / Lean | allocated | mean diff | max diff |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `first-light` | 512x256 | 1 | 1 | **0.04 s** | 0.26 s | -- | **0.15x** | 0.4 GB | 0.55 | **1** |
+| `spheres-preview` | 320x213 | 16 | 30 | **1.10 s** | 4.26 s | 2.05 s (x8) | **0.26x** | 14.0 GB | 3.17 | 95 |
+| `spheres-quality` | 200x133 | 64 | 50 | **1.65 s** | 7.38 s | 3.16 s (x8) | **0.22x** | 21.6 GB | 1.67 | 40 |
+| `weekend-small` | 100x66 | 4 | 30 | 1.28 s | 0.56 s | 2.99 s (x4) | 2.3x | 17.1 GB | 31.92 | 223 |
+
+Three things come out of this that the Wasm column could not say.
+
+**The renderer is not the slow part.** Extracted to OCaml it is four to
+six times *faster* than the single-core Lean original on three of the four
+examples, and faster than Lean's eight-task run on both sphere scenes
+(1.10 s against 2.05 s, 1.65 s against 3.16 s). So the 4.1x and 4.3x in
+the table above are the Wasm backend's cost, not the algorithm's: the same
+source through a conventional compiler wins. Peak heap stays between 1 and
+1.4 MB throughout -- the allocation column is everything the renderer ever
+asked for, which the GC recycles and the Wasm allocator could only rewind.
+
+**`weekend-small` is the exception, and it is the sphere list.** 488
+spheres, every ray tested against all of them, and `Scene.hit_list` folds
+a cons list where the Lean original indexes an array. At four samples the
+2.3x is almost entirely that traversal; it is the one place where the data
+structure, rather than the backend, is what costs. `Proofs.v`'s
+`hit_list_app` is the statement that would let a bounding structure be
+slotted in without changing what `hit_list` means.
+
+**The float port did not close the `first-light` gap, and that is
+informative.** That example does no sampling, so nothing but the
+arithmetic separates the two programs -- and the difference is still at
+most one level in 255, exactly what Q38.24 fixed point gave. Both sides
+now compute in binary64, so the residual is the order of evaluation: the
+two associate the same expressions differently and round at different
+points. One level out of 255 is what that costs, and no change of number
+format will remove it.
 
 ## What the differences mean
 
