@@ -231,10 +231,10 @@
           pkgs.gnumake
           pkgs.python3
           pkgs.wabt # wasm2wat, to look at what came out
-          # `make ocaml`: theories/ through Rocq's own extraction, which is
-          # how the renderer is run and timed while the Wasm backend does
-          # not accept primitive floats.  bench/ocaml/build.sh needs nothing
-          # but ocamlopt and the unix library that comes with it.
+          # `make ocaml`: theories/ through Rocq's own extraction, the second
+          # backend the benchmark compares the Wasm one against.
+          # bench/ocaml/build.sh needs nothing but ocamlopt and the unix
+          # library that comes with it.
           pkgs.ocaml
           # the benchmark drivers, bench/*.mjs
           pkgs.nodejs

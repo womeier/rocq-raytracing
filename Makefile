@@ -10,9 +10,9 @@ clean: Makefile.rocq
 Makefile.rocq: _RocqProject
 	$(COQBIN)rocq makefile -f _RocqProject -o Makefile.rocq
 
-# The OCaml extraction (theories/extraction_ocaml.v, bench/ocaml/), which is
-# how the renderer is run and timed while CertiRocq's Wasm backend does not
-# accept primitive floats.
+# The OCaml extraction (theories/extraction_ocaml.v, bench/ocaml/): the same
+# theories/ through a second backend, which is what separates the renderer's
+# own cost from CertiRocq's (bench/README.md).
 #
 # Compiled here rather than through Makefile.rocq, and left out of
 # _RocqProject, so that the Wasm build and `nix build` never reach it: it is
@@ -42,7 +42,7 @@ bench: all
 	node bench/run.mjs
 
 # The same four examples through the OCaml extraction only -- no Wasm module
-# and no Lean binaries needed, so this is the one that runs today.
+# and no Lean binaries needed, so this one runs with just ocamlopt.
 bench-ocaml: ocaml
 	node bench/run.mjs --skip-lean --skip-wasm
 

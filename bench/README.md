@@ -18,10 +18,9 @@ node bench/run.mjs    # renders everything, writes bench/results/ (make bench)
 ```
 
 Any of the three whose binary is missing is skipped with a note rather than
-being an error, so a partial run is normal. `make bench-ocaml` is the one
-that works today -- the Wasm module cannot be built from the current sources
-until CertiRocq's backend accepts primitive floats, and the Lean side needs
-the clones.
+being an error, so a partial run is normal. `make bench-ocaml` needs nothing
+but `ocamlopt`; the Wasm module needs CertiRocq (`nix build` pins a backend
+that compiles primitive floats) and the Lean side needs the clones.
 
 The four examples take about a minute and a half through Wasm and about five
 seconds through the OCaml extraction.
@@ -45,12 +44,11 @@ same unary `nat` counters, the same cons-list output -- compiled by a mature
 backend with a generational GC under it. Its time is close to the renderer's
 own cost.
 
-So the ratio between the two columns is the backend's overhead, which is the
-figure worth having when the Wasm build comes back: it says how much of the
-gap to Lean is the algorithm and how much is the compiler. And the
-**Wasm-vs-OCaml image difference should be zero** once both are float
-builds, since it is one program compiled twice; any nonzero entry there is a
-backend bug rather than a rounding story.
+So the ratio between the two columns is the backend's overhead: it says how
+much of the gap to Lean is the algorithm and how much is the compiler. It
+comes out at about 10x. And the **Wasm-vs-OCaml image difference is zero**
+on all four examples, as it must be for one program compiled twice; any
+nonzero entry there would be a backend bug rather than a rounding story.
 
 ## The examples
 
@@ -117,9 +115,7 @@ In `bench/results/` (git-ignored):
 | `results.md` | the tables |
 
 The PNGs are committed; the PPMs they are made from are not. Both they and
-every number here come from the Q38.24 fixed-point build: the benchmark needs
-a Wasm module, and the float port cannot be compiled to one until CertiRocq's
-backend accepts floats (see the repository README).
+every number here come from the primitive-float build, through both backends.
 
 Both sides now compute in IEEE doubles -- `theories/Flt.v` is
 `Corelib.Floats.PrimFloat` -- but the Rocq renderer draws from SplitMix
@@ -129,11 +125,11 @@ example:
 
 * `first-light` does no sampling, so nothing but the arithmetic separates the
   two, and they differ by at most **one level in 255** over the whole image.
-  That was the check that Q38.24 fixed point landed where the doubles do;
-  what is worth noticing is that the float port did not improve it. The
-  residual is the order of evaluation, not the number format -- the two
-  programs associate the same expressions differently and round at different
-  points -- and one level out of 255 is what that costs.
+  What is worth noticing is that the float port did not improve on the
+  fixed-point one here: with both sides in binary64 the residual is the order
+  of evaluation, not the number format -- the two programs associate the same
+  expressions differently and round at different points -- and one level out
+  of 255 is what that costs.
 * the `spheres-` examples are the same four spheres seen through the same
   camera, but sampled along different random sequences, so they differ the way
   two renders of one scene with different seeds do -- the same picture,

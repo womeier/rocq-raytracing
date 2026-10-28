@@ -5,10 +5,10 @@ programs it was ported from. Render times are in [`RESULTS.md`](RESULTS.md),
 which is where they belong -- they move a few percent between runs, while
 everything below is deterministic. How to reproduce: [`README.md`](README.md).
 
-> These renders are the **Q38.24 fixed-point build's**. `theories/` now
-> computes in primitive floats and cannot be compiled to Wasm until
-> CertiRocq's backend accepts them, so the images and the differences below
-> have not been re-measured.
+> These renders are the primitive-float build's, through CertiRocq's Wasm
+> backend. The OCaml extraction renders the same bytes -- `<name>.ocaml.png`
+> and `<name>.backends-diff.png` in `results/`, the latter uniformly black --
+> so one Rocq column stands for both.
 
 | | Rocq (Wasm) | Lean, 1 core | Lean, N cores | difference, x4 |
 |---|---|---|---|---|
@@ -24,12 +24,12 @@ multiplied by four, so black is agreement.
 `first-light` has no N-core entry: that renderer (TOTBWF/lean4-raytrace) has
 no threading to turn on. It is also the only row where the two render the same
 thing deterministically -- one ray per pixel, no sampling -- and there **no
-channel anywhere is off by more than one level in 255**, which is the check on
-Q38.24 fixed point. The two `spheres-` rows are the same four spheres along
-different random sequences: the same picture, different noise, which more
+channel anywhere is off by more than one level in 255**. Both sides compute in
+binary64 now, so that last level is evaluation order, not number format. The
+two `spheres-` rows are the same four spheres along different random sequences: the same picture, different noise, which more
 samples drives down (3.17 at 16 samples, 1.67 at 64). `weekend-small` is not
 even the same world -- its 488 spheres are *drawn* from the generator, so the
 two implementations place and colour them differently, and its difference
 column says nothing about the arithmetic.
 
-On AMD Ryzen 5 PRO 7540U w/ Radeon 740M Graphics, 2026-10-15.
+On AMD Ryzen 5 PRO 7540U w/ Radeon 740M Graphics, 2026-10-28.

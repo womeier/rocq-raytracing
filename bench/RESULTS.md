@@ -1,22 +1,40 @@
 # Results
 
-AMD Ryzen 5 PRO 7540U (12 threads), node v24.21.0, 2026-10-15. Reproduce with
-`make bench-setup && make bench` -- about two minutes.
+AMD Ryzen 5 PRO 7540U (12 threads), node v24.21.0, 2026-10-28. Reproduce with
+`make bench-setup && make bench` -- about a minute and a half.
 
-> The **Wasm** column measured the Q38.24 fixed-point build, which is what
-> the committed `.wasm` still is. `theories/` has since been ported to
-> primitive floats and cannot be compiled to Wasm until CertiRocq's backend
-> accepts them, so that column stands as the baseline rather than as a
-> description of the current sources. Where it names `theories/Fixed.v`, the
-> file is now `theories/Flt.v` and says much less. The float port's own
-> numbers, through the OCaml extraction, are in the next section.
+Both Rocq columns are one `theories/`, computing in primitive floats, through
+two backends: CertiRocq's verified Wasm backend and Rocq's own OCaml
+extraction. They render the same bytes, so one difference column covers both.
 
-| example | scene | size | spp | depth | Rocq (Wasm) | Lean, 1 core | Lean, N cores | Rocq / Lean | allocated | mean diff | max diff |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `first-light` | normal-shaded sphere | 512x256 | 1 | 1 | 0.38 s | 0.25 s | -- | 1.5x | 0.5 GB | 0.55 | **1** |
-| `spheres-preview` | four spheres | 320x213 | 16 | 30 | 16.9 s | 4.11 s | 1.77 s (x8) | 4.1x | 20.3 GB | 3.17 | 95 |
-| `spheres-quality` | four spheres | 200x133 | 64 | 50 | 25.6 s | 6.25 s | 2.77 s (x8) | 4.1x | 31.3 GB | 1.67 | 40 |
-| `weekend-small` | the book's 488 spheres | 100x66 | 4 | 30 | 26.5 s | 0.53 s | 3.15 s (x4) | 50.1x | 25.2 GB | 31.92 | 223 |
+| example | scene | size | spp | depth | Rocq (Wasm) | Rocq (OCaml) | Lean, 1 core | Lean, N cores | Wasm / Lean | Wasm allocated | mean diff | max diff |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `first-light` | normal-shaded sphere | 512x256 | 1 | 1 | 0.33 s | 0.03 s | 0.24 s | -- | 1.4x | 0.6 GB | 0.55 | **1** |
+| `spheres-preview` | four spheres | 320x213 | 16 | 30 | 9.56 s | 0.94 s | 3.95 s | 1.95 s (x8) | 2.4x | 17.4 GB | 3.17 | 95 |
+| `spheres-quality` | four spheres | 200x133 | 64 | 50 | 15.9 s | 1.59 s | 6.40 s | 3.05 s (x8) | 2.5x | 21.9 GB | 1.67 | 40 |
+| `weekend-small` | the book's 488 spheres | 100x66 | 4 | 30 | 10.4 s | 1.11 s | 0.55 s | 3.21 s (x4) | 19.0x | 15.9 GB | 31.92 | 223 |
+
+The Wasm-against-OCaml difference is **0.00 mean, 0 max** on all four: one
+program compiled twice, so anything else would be a backend bug rather than a
+rounding story.
+
+### Against the fixed-point build it replaced
+
+The same four examples on the same machine, 2026-10-15, when `theories/`
+computed in Q38.24 fixed point on `int63` and that was what the Wasm backend
+would take:
+
+| example | Rocq (Wasm), Q38.24 | now | allocated, then | now |
+|---|---|---|---|---|
+| `first-light` | 0.38 s | 0.33 s | 0.5 GB | 0.6 GB |
+| `spheres-preview` | 16.9 s | 9.56 s | 20.3 GB | 17.4 GB |
+| `spheres-quality` | 25.6 s | 15.9 s | 31.3 GB | 21.9 GB |
+| `weekend-small` | 26.5 s | 10.4 s | 25.2 GB | 15.9 GB |
+
+1.2x to 2.5x, against the ~2x on the 488-sphere scene that
+[`FUTURE.md`](../FUTURE.md) predicted from static operation counts. The Lean
+times moved by a few percent between the two runs, so the comparison is
+across runs but not across machines.
 
 The Wasm module has no threads at all -- one linear memory, no garbage
 collector, an allocator the host rewinds -- so "Rocq / Lean" compares it with
@@ -35,38 +53,32 @@ The images are in `bench/results/` (`<name>.rocq.png`, `<name>.lean.png`,
 `<name>.lean-mt.png`, and `<name>.diff.png`, the per-channel difference
 multiplied by 4). [`IMAGES.md`](IMAGES.md) shows them side by side.
 
-## The float port, through the OCaml extraction
+## What the second backend says
 
-Same machine, 2026-10-28, `make bench-ocaml` for the Rocq column and the
-Lean binaries in the same run so that the ratio is not across runs. No Wasm
-column: the backend cannot build one from these sources yet. This is
-`theories/` compiled by Rocq's own extraction (`bench/ocaml/`), which is
-the same program the Wasm module would be -- the same `Fixpoint`s, the same
-unary `nat` counters, the same cons-list output -- with a mature backend
-and a generational GC under it.
+The OCaml column is `theories/` through Rocq's own extraction
+(`bench/ocaml/`) -- the same `Fixpoint`s, the same unary `nat` counters, the
+same cons-list output as the Wasm module, with a mature backend and a
+generational GC under it. Its allocation figures: 0.4, 14.0, 21.6 and 17.1 GB,
+against a top heap of 1.0-1.5 MB throughout, which the GC recycles and the
+Wasm allocator can only rewind.
 
-| example | size | spp | depth | Rocq (OCaml) | Lean, 1 core | Lean, N cores | Rocq / Lean | allocated | mean diff | max diff |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `first-light` | 512x256 | 1 | 1 | **0.04 s** | 0.26 s | -- | **0.15x** | 0.4 GB | 0.55 | **1** |
-| `spheres-preview` | 320x213 | 16 | 30 | **1.10 s** | 4.26 s | 2.05 s (x8) | **0.26x** | 14.0 GB | 3.17 | 95 |
-| `spheres-quality` | 200x133 | 64 | 50 | **1.65 s** | 7.38 s | 3.16 s (x8) | **0.22x** | 21.6 GB | 1.67 | 40 |
-| `weekend-small` | 100x66 | 4 | 30 | 1.28 s | 0.56 s | 2.99 s (x4) | 2.3x | 17.1 GB | 31.92 | 223 |
+Three things come out of having both that neither column says alone.
 
 Three things come out of this that the Wasm column could not say.
 
 **The renderer is not the slow part.** Extracted to OCaml it is four to
 six times *faster* than the single-core Lean original on three of the four
 examples, and faster than Lean's eight-task run on both sphere scenes
-(1.10 s against 2.05 s, 1.65 s against 3.16 s). So the 4.1x and 4.3x in
-the table above are the Wasm backend's cost, not the algorithm's: the same
-source through a conventional compiler wins. Peak heap stays between 1 and
-1.4 MB throughout -- the allocation column is everything the renderer ever
-asked for, which the GC recycles and the Wasm allocator could only rewind.
+(0.94 s against 1.95 s, 1.59 s against 3.05 s). So the 2.4x and 2.5x in the
+table above are the Wasm backend's cost, not the algorithm's: the same source
+through a conventional compiler wins, by a factor of 10 here -- that ratio,
+Wasm over OCaml, is the cleanest measure of the calling convention, the boxing
+and the allocation traffic, since everything else about the two is the same.
 
 **`weekend-small` is the exception, and it is the sphere list.** 488
 spheres, every ray tested against all of them, and `Scene.hit_list` folds
 a cons list where the Lean original indexes an array. At four samples the
-2.3x is almost entirely that traversal; it is the one place where the data
+2.0x the OCaml backend still gives up there is almost entirely that traversal; it is the one place where the data
 structure, rather than the backend, is what costs. `Proofs.v`'s
 `hit_list_app` is the statement that would let a bounding structure be
 slotted in without changing what `hit_list` means.
@@ -82,13 +94,14 @@ format will remove it.
 
 ## What the differences mean
 
-The two cannot agree bit for bit -- Q38.24 fixed point against IEEE doubles,
-SplitMix against Lean's `stdGen` -- so the column says something different in
-each row:
+The two cannot agree bit for bit -- SplitMix against Lean's `stdGen`, and the
+same binary64 expressions associated differently -- so the column says
+something different in each row:
 
 * `first-light` does no sampling, so both are deterministic: **no channel
   anywhere is off by more than one level in 255**. That is the check on
-  `theories/Fixed.v`.
+  `theories/Flt.v`, and on both backends: the Wasm and OCaml renders of it are
+  the same bytes.
 * the `spheres-` rows are the same four spheres and the same camera along
   different random sequences: the same picture, different noise, which more
   samples drives down (3.17 at 16 samples, 1.67 at 64).
@@ -98,16 +111,17 @@ each row:
 
 ## Where the time goes
 
-The gap tracks the number of spheres, not the arithmetic: 1.5x on one sphere,
-4x on four, 50x on 488. Per sample, the Wasm module allocates 20 KB in the
-four-sphere scene and 1.0 MB in the weekend one -- about 2 KB per sphere per
-sample, because `hit_list` walks a cons list and every intermediate `Fixed.t`
-is its own heap cell, where Lean scans an `Array` with its floats unboxed. At
-20 GB of bump allocation in 17 s, that traffic is the cost, more than the
-fixed-point arithmetic itself: `Fixed.mul` is a widening multiply and a shift
-and `Fixed.sqrt` six Newton steps each with a 128/64 division, but
-`first-light` -- which does that arithmetic and nothing else -- is only 1.5x
-off native.
+The gap tracks the number of spheres, not the arithmetic: 1.4x on one sphere,
+2.4x on four, 19x on 488. Per sample, the Wasm module allocates 17 KB in the
+four-sphere scene and 0.65 MB in the weekend one -- about 1.3 KB per sphere
+per sample, because `hit_list` walks a cons list and every intermediate
+`Flt.t` is its own heap cell, where Lean scans an `Array` with its floats
+unboxed. At 17 GB of bump allocation in 9.6 s, that traffic is the cost, and
+now plainly more than the arithmetic: going from Q38.24 to single hardware
+instructions took the 488-sphere scene 2.5x faster while `first-light` --
+which does that arithmetic and nothing else -- barely moved, because it was
+already only 1.4x off native. The remaining order of magnitude is the boxing,
+not the operations ([`FUTURE.md`](../FUTURE.md) item 2).
 
 ## What the threads do
 

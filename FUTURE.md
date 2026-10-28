@@ -6,32 +6,41 @@ order of the summary table at the end.
 
 ## The one fact everything follows from
 
-The renderer spends a near-constant **0.8 us per KB it allocates**, over a
-260-fold range of per-sample cost. Its time *is* its allocation volume: ~700 B
-per sphere test, 25.2 GB over one 100x66 image, against a live scene of
-1.2 MB. Hence the gap tracks sphere count, not arithmetic -- 1.5x on one
-sphere, 4.1x on four, 50x on 488. Every `Flt.t` intermediate is an 8-byte
+The renderer spends a near-constant **0.5-0.7 us per KB it allocates**, over a
+260-fold range of per-sample cost. Its time *is* its allocation volume: ~440 B
+per sphere test, 15.9 GB over one 100x66 image, against a live scene of
+1.2 MB. Hence the gap tracks sphere count, not arithmetic -- 1.4x on one
+sphere, 2.4x on four, 19x on 488. Every `Flt.t` intermediate is an 8-byte
 heap cell, a `vec3` a block plus three, and nothing is freed inside a call.
+(The same law held at 0.8 us/KB and ~700 B in the fixed-point build: floats
+cut the volume, not the rate.)
 
-## 1. Primitive floats in the backend
+## 1. Primitive floats in the backend -- **done**
 
-**The Rocq side is done.** `theories/` computes in
+Both halves are in place. `theories/` computes in
 `Corelib.Floats.PrimFloat`; `theories/Flt.v` is what is left of the old
 `Fixed.v`, and `Vec3`/`Trig`/`Scene`/`Render`/`Random` changed only in which
-names they call and which scope they open. Everything compiles and
-`theories/Tests.v` passes. What does not yet work is the last step:
+names they call and which scope they open. The backend side -- where the
+release stopped at
 
 ```
 theories/extraction.v: Could not compile:
   Unsupported primitive operator: Corelib.Floats.PrimFloat.ltb
 ```
 
-MetaRocq's quoting and erasure both go through -- the quoting warnings name
-the nine float primitives the module reaches, `fadd fsub fmul fdiv fopp fabs
-fsqrt flt float_of_int` -- and the backend then stops in `primop_map`. So the
-table below is now a checklist, measured rather than predicted: of PrimFloat's
-19 primitives 9 are reached, 2 more are free, 8 are not needed. Wasm
-constructor names are WasmCert's, since that is what the backend emits.
+-- is the `wasm-prim-floats` branch of
+[womeier/certirocq](https://github.com/womeier/certirocq), which `flake.nix`
+pins. The rest of this section is what that work consisted of, kept because
+it is also the specification of what is now implemented, and because points 4
+to 7 are the parts that still deserve scrutiny.
+
+MetaRocq's quoting and erasure both went through from the start -- the quoting
+warnings name the nine float primitives the module reaches, `fadd fsub fmul
+fdiv fopp fabs fsqrt flt float_of_int` -- and the backend stopped in
+`primop_map`. So the table below is a checklist, measured rather than
+predicted: of PrimFloat's 19 primitives 9 are reached, 2 more are free, 8 are
+not needed. Wasm constructor names are WasmCert's, since that is what the
+backend emits.
 
 **Required.** The nine, plus the constants.
 
@@ -150,12 +159,17 @@ instead), `next_up` (`#float64_next_up`) and `next_down`
    treatment `primints_correct.v` (5,209 lines) gives the int63 ones, against
    `FloatAxioms` rather than `Uint63Axioms`.
 
-**What this is worth.** Comparisons allocate nothing (booleans are i32
+**What this was worth: 1.2x to 2.5x, measured.** `bench/RESULTS.md` has the
+run -- the 488-sphere scene went from 26.5 s to 10.4 s and from 25.2 GB of
+bump allocation to 15.9 GB, against the ~2x predicted just below. The static
+count follows.
+
+Comparisons allocate nothing (booleans are i32
 immediates, `primints.v:191`); every arithmetic operation and every shift
 stores an 8-byte cell and bumps `mem_ptr` (`primints.v:113,240`). So the
 allocation count is the primitive-operation count, and the two columns below
-are the two ports: the left one is what the committed `.wasm` does, the right
-one what `theories/` now asks for.
+are the two ports: the left one is what the fixed-point `.wasm` did, the right
+one what the module does now.
 
 | | Q38.24 | binary64 | |
 |---|---|---|---|
@@ -276,7 +290,9 @@ sweep touches is then reference-counted atomically.
 
 `render_length` is proved, and so is `trunc_byte_is_a_byte`. One statement is
 `Admitted`: that `Flt.trunc_byte` is the floor. `theories/Tests.v` pins it at
-concrete values by conversion.
+concrete values by conversion. In the backend, the float branch admits three
+float-only obligations; the structural parts of the correctness proof cover
+it.
 
 This is where the float port already paid off. The fixed-point version had
 fifteen admitted arithmetic specs, because it derived every signed operation
@@ -293,7 +309,7 @@ repository.
 | inline `Flt`/`Vec3` harder | small alone | small | a pipeline flag, no proof | low, but free to measure |
 | unboxing pass, unverified | ~2-2.5x | ~2.5x less | days | medium |
 | the same pass, verified | as above | as above | 3-6 months, one new lemma | medium |
-| primitive floats | ~2x | ~2.1x less | backend only; `theories/` is ported | high -- static count and measurement agree |
+| ~~primitive floats~~ **done** | 2.5x measured | 1.6x less, measured | -- | predicted ~2x, got 2.5x |
 | floats *and* unboxing | ~3-4x | ~4x less | the sum of the two | low-medium |
 | unboxed across calls | 6-10x | ~7-10x less | +4-7 months, new calling convention | low |
 | wider object words | 5-8x | better here, worse elsewhere | large | medium, not recommended |
