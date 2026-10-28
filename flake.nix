@@ -20,9 +20,90 @@
 
       # One Rocq 9.1 toolchain. On unstable everything lives in
       # rocqPackages_9_1: the rocq core, the Coq-named compatibility
-      # packages (coqc, which CertiRocq's plugin needs), CertiRocq itself
-      # and the stdlib.
-      rocqPackages = pkgs.rocqPackages_9_1;
+      # packages (coqc, which CertiRocq's plugin needs), and the stdlib.
+      #
+      # Two of CertiRocq's dependencies are not the ones nixpkgs picks by
+      # default, matching what the fork's own .nix/config.nix pins:
+      #   * WasmCert (nixpkgs' wasmcert) 2.2.1 instead of 2.2.0, which is
+      #     what rocq-certirocq.opam asks for ("coq-wasm" {>= "2.2.1"}).
+      #     This nixpkgs knows only the 2.2.0 release -- later ones hold
+      #     2.2.1 back for Rocq 9.2 because it breaks the *released*
+      #     CertiRocq -- so the version is given as an explicit rev+hash.
+      #   * MetaRocq from its "9.1" development branch instead of the
+      #     1.5.1-9.1 release. CertiRocq has needed that branch since
+      #     https://github.com/CertiRocq/certirocq/pull/158; c8cd4605 is
+      #     the branch head.
+      rocqPackages = pkgs.rocqPackages_9_1.overrideScope (
+        _self: super: {
+          wasmcert = super.wasmcert.override {
+            version = {
+              version = "2.2.1";
+              location = {
+                rev = "v2.2.1";
+                hash = "sha256-RtJXfaX/04+BuMWjnq6PKOyNm5Ed5v/ZP71C9Q8iSVk=";
+              };
+            };
+          };
+          metarocq = super.metarocq.override {
+            version = {
+              version = "unstable-c8cd4605";
+              location = {
+                rev = "c8cd46054518193103c3bb33aa6e15c7f489e72c";
+                hash = "sha256-Lcr6B4gYSS57zVinn+e2tk1Kfy9XzJs+sd3CTuSTvX0=";
+              };
+            };
+          };
+        }
+      );
+
+      # CertiRocq is taken from a branch rather than the 0.9.1+9.1 release,
+      # because the release's Wasm backend has no code generation for
+      # primitive floats and this renderer computes in them
+      # (theories/Flt.v) -- against the release, theories/extraction.v
+      # stops at "Unsupported primitive operator:
+      # Corelib.Floats.PrimFloat.ltb".
+      #
+      # womeier/certirocq wasm-prim-floats adds all eighteen PrimFloat
+      # operations and float literals. A primitive float is boxed exactly
+      # as a uint63 already was -- an 8-byte payload at an even address,
+      # the value being that address, the payload holding the IEEE 754 bit
+      # pattern -- so the memory layout, the invariant and the
+      # instantiation proof are untouched, and src/index.js's one
+      # setFloat64 per value is the whole host-side encoding. The branch
+      # admits three float-only obligations (its TODO.md); the structural
+      # parts of the correctness proof cover the new branch.
+      certirocqSrc = pkgs.fetchFromGitHub {
+        owner = "womeier";
+        repo = "certirocq";
+        rev = "2d7406b5ac4fdce17b54cc2c429af5cbd5a13db8";
+        hash = "sha256-X5IxtzBUdSJyFD8sese0tpdkCRa/WFLTa+eshXOAA/g=";
+      };
+
+      # Built from the branch's own build recipe
+      # (.nix/coq-overlays/CertiRocq/default.nix) rather than from
+      # nixpkgs' rocqPackages_9_1.CertiRocq with the source swapped out.
+      # nixpkgs' recipe is a snapshot of an older directory layout
+      # (top-level plugin/ and cplugin/, built by `make plugins`); CertiRocq
+      # has since moved both under plugins/ and split the build into `make
+      # plugin` / `make cplugin` (CertiRocq/certirocq@fb1cf3e), so against
+      # that recipe the build stops with "make: *** plugin: No such file or
+      # directory". Taking the recipe from the source keeps the two in step.
+      CertiRocq =
+        (rocqPackages.callPackage "${certirocqSrc}/.nix/coq-overlays/CertiRocq/default.nix" {
+          inherit pkgs;
+        }).overrideAttrs
+          (old: {
+            version = "wasm-prim-floats-2d7406b5";
+            src = certirocqSrc;
+            # Both of these are cosmetic fixups of what the generic
+            # mkCoqDerivation machinery leaves behind when it cannot resolve
+            # `version` against a known release (there is none here -- see
+            # certirocqSrc above): a "-broken" name suffix and meta.broken.
+            name = "coq9.1-CertiRocq-wasm-prim-floats";
+            meta = (old.meta or { }) // {
+              broken = false;
+            };
+          });
 
       # Rocq sources + the files the web bundle is made of. Keeps build
       # products and editor leftovers out of the derivation.
@@ -49,7 +130,7 @@
 
         nativeBuildInputs = [
           rocqPackages.coq
-          rocqPackages.CertiRocq
+          CertiRocq
         ];
 
         COQBIN = "${rocqPackages.coq}/bin/";
@@ -96,7 +177,7 @@
         # substitute-only before building anything:
         #   nix build --max-jobs 0 .#CertiRocq
         # CompCert comes with it (propagated), so that one fetch covers both.
-        CertiRocq = rocqPackages.CertiRocq;
+        inherit CertiRocq;
         inherit serve;
       };
 
@@ -122,7 +203,7 @@
         packages = [
           rocqPackages.rocq-core
           rocqPackages.coq
-          rocqPackages.CertiRocq
+          CertiRocq
           rocqPackages.stdlib
           rocqPackages.coq-lsp
           pkgs.gnumake
