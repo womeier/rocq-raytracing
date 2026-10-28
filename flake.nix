@@ -3,8 +3,22 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
+  # The same CertiRocq fork as certirocqSrc below, fetched a second way.
+  # CertiRocq is built from a recipe that lives *in* the checkout, so that
+  # one file has to be readable while the flake is still being evaluated.
+  # Reading it out of a fetchFromGitHub would make evaluation depend on
+  # building a derivation, which `nix build --max-jobs 0` -- how CI checks
+  # that the binary cache holds the toolchain -- refuses to do; an input
+  # is fetched by the flake machinery instead, before evaluation starts.
+  # The rev is pinned in both places and the two must agree: the assert in
+  # CertiRocq below checks that they still do.
+  inputs.certirocq = {
+    url = "github:womeier/certirocq/2d7406b5ac4fdce17b54cc2c429af5cbd5a13db8";
+    flake = false;
+  };
+
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, certirocq }:
     let
       # Linux x86_64 only, on purpose: the one platform this is developed on.
       # The Wasm the build produces is platform-independent anyway, so a
@@ -88,8 +102,16 @@
       # plugin` / `make cplugin` (CertiRocq/certirocq@fb1cf3e), so against
       # that recipe the build stops with "make: *** plugin: No such file or
       # directory". Taking the recipe from the source keeps the two in step.
+      #
+      # The recipe is read through the certirocq *input* (see inputs
+      # above) while src stays the fetchFromGitHub: both name the same
+      # rev, so both land on the same store path -- which is what the
+      # assert says -- but only the input can be read during evaluation,
+      # and only the fetch keeps this derivation byte-identical to the one
+      # the binary cache was filled from.
       CertiRocq =
-        (rocqPackages.callPackage "${certirocqSrc}/.nix/coq-overlays/CertiRocq/default.nix" {
+        assert certirocqSrc.outPath == certirocq.outPath;
+        (rocqPackages.callPackage "${certirocq}/.nix/coq-overlays/CertiRocq/default.nix" {
           inherit pkgs;
         }).overrideAttrs
           (old: {
