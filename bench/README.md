@@ -1,20 +1,56 @@
-# Four examples, two implementations
+# Four examples, three implementations
 
-This directory renders four fixed examples with the Rocq renderer (the
-CertiRocq-compiled Wasm module, driven by node) and with the Lean programs
-this project was ported from, times both, and compares the images.
+This directory renders four fixed examples with each implementation it can
+find, times them, and compares the images. Two of the three are the same
+Rocq source:
+
+| | |
+|---|---|
+| **Wasm** | `theories/` compiled by CertiRocq's verified Wasm backend, driven by node the way the browser drives it |
+| **OCaml** | `theories/` through Rocq's own extraction (`bench/ocaml/`), a native binary |
+| **Lean** | the two Lean programs this project was ported from |
 
 ```sh
-make                 # or nix build: produces the Wasm module
-bench/setup.sh       # clones and builds the two Lean originals  (make bench-setup)
-node bench/run.mjs   # renders everything, writes bench/results/ (make bench)
+make                  # the Wasm module (or nix build)
+make ocaml            # the OCaml binary
+bench/setup.sh        # clones and builds the two Lean originals (make bench-setup)
+node bench/run.mjs    # renders everything, writes bench/results/ (make bench)
 ```
 
-The four examples together take about a minute and a half, nearly all of it
-the Rocq side.
+Any of the three whose binary is missing is skipped with a note rather than
+being an error, so a partial run is normal. `make bench-ocaml` is the one
+that works today -- the Wasm module cannot be built from the current sources
+until CertiRocq's backend accepts primitive floats, and the Lean side needs
+the clones.
+
+The four examples take about a minute and a half through Wasm and about five
+seconds through the OCaml extraction.
 
 `bench/setup.sh` needs network access the first time (the clones and, through
 elan, the Lean toolchain each one pins).
+
+## Why two Rocq columns
+
+They measure different things, and the Wasm number alone cannot tell them
+apart.
+
+The Wasm module is the deliverable: a verified backend's output, with one
+linear memory, no garbage collector and a bump allocator the host rewinds
+between spans. Its time is the renderer's cost *plus* that backend's calling
+convention, its boxing of every value into a heap cell, and the allocation
+traffic that follows.
+
+The OCaml extraction is the same `theories/` -- the same `Fixpoint`s, the
+same unary `nat` counters, the same cons-list output -- compiled by a mature
+backend with a generational GC under it. Its time is close to the renderer's
+own cost.
+
+So the ratio between the two columns is the backend's overhead, which is the
+figure worth having when the Wasm build comes back: it says how much of the
+gap to Lean is the algorithm and how much is the compiler. And the
+**Wasm-vs-OCaml image difference should be zero** once both are float
+builds, since it is one program compiled twice; any nonzero entry there is a
+backend bug rather than a rounding story.
 
 ## The examples
 
@@ -71,11 +107,14 @@ In `bench/results/` (git-ignored):
 | | |
 |---|---|
 | `<name>.rocq.ppm` / `.png` | what the Wasm module rendered |
+| `<name>.ocaml.ppm` / `.png` | what the OCaml extraction rendered |
 | `<name>.lean.ppm` / `.png` | what the Lean program rendered |
-| `<name>.diff.png` | the per-channel difference, multiplied by 4 to be visible |
-| `<name>.lean-mt.png` | the same, rendered with `threads` tasks |
+| `<name>.diff.png` | Wasm against Lean, per channel, multiplied by 4 to be visible |
+| `<name>.ocaml-diff.png` | the OCaml extraction against Lean |
+| `<name>.backends-diff.png` | the two Rocq backends against each other |
+| `<name>.lean-mt.png` | the Lean render again, with `threads` tasks |
 | `results.json` | every timing, the allocation totals, the comparison statistics |
-| `results.md` | the table |
+| `results.md` | the tables |
 
 The PNGs are committed; the PPMs they are made from are not. Both they and
 every number here come from the Q38.24 fixed-point build: the benchmark needs
@@ -128,6 +167,7 @@ in `bench/lean/`:
 | `setup.sh` | clone, patch and build the Lean originals |
 | `run.mjs` | render everything, time it, write the report |
 | `rocq-render.mjs` | one render through the Wasm module (usable on its own) |
+| `ocaml/` | the OCaml extraction: two primitive shims, a driver, a build script |
 | `ppm.mjs` | PPM to PNG, and the comparison of two renders |
 | `png.mjs` | a minimal PNG encoder, so that nothing has to be installed |
 
@@ -137,3 +177,39 @@ in `bench/lean/`:
 node bench/rocq-render.mjs --name try --scene 1 --width 160 \
      --samples 4 --depth 30 --out /tmp
 ```
+
+and `bench/ocaml/rocq-render` takes the same ones, so the two are
+interchangeable:
+
+```sh
+bench/ocaml/rocq-render --name try --scene 1 --width 160 \
+     --samples 4 --depth 30 --out /tmp
+bench/ocaml/rocq-render --check      # against the expectations in Tests.v
+```
+
+## bench/ocaml/
+
+`theories/extraction_ocaml.v` writes `raytracer.ml` and `raytracer.mli`
+here; `build.sh` compiles them with plain `ocamlopt` into `rocq-render`.
+There is no dune project and no findlib: the only library is `unix`, for a
+wall clock.
+
+Rocq's extraction sends the primitives to modules named `Uint63` and
+`Float64`, which in the Rocq tree are part of `rocq-runtime.kernel`.
+Linking that would pull the bytecode VM and the dynamic loader into a
+benchmark binary, and one of its operations is a C stub, so `uint63.ml` and
+`float64.ml` here are the two dozen definitions the renderer actually
+reaches, transcribed from `kernel/uint63_63.ml` and `kernel/float64.ml`.
+They are short enough to read, and the two details that are easy to get
+wrong are commented: an int63 is an unmasked OCaml `int`, and its
+comparison is unsigned, which `<` is not.
+
+`--check` is what says the transcription is faithful. It renders the 4x2
+corner that `theories/Tests.v` pins down by conversion and compares the
+bytes; if `of_uint63` rounded differently, or if a comparison ordered NaN
+rather than returning false, the corner would move. `make check-ocaml` runs
+it.
+
+`nat` is left as unary Peano, which is what CertiRocq compiles.
+`ExtrOcamlNatInt` would turn the sample and bounce counters into machine
+integers and so measure a different program.

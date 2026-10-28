@@ -28,10 +28,21 @@ constants; [`FUTURE.md`](FUTURE.md) has the mapping onto Wasm and what else
 the backend needs.
 
 So until that lands, `nix build` and `nix run` stop at the same place, and the
-Pages workflow with them -- the live demo and the images and numbers in
-[`bench/`](bench/) are all the earlier Q38.24 fixed-point build. `make
-theories/Tests.vo` is the part that does work, and is the way to check this
-port.
+Pages workflow with them -- the live demo is still the earlier Q38.24
+fixed-point build.
+
+The float port does run, though, through Rocq's own extraction:
+
+```sh
+make ocaml          # theories/ -> bench/ocaml/rocq-render, a native binary
+make check-ocaml    # renders Tests.v's corner and checks the bytes
+make bench-ocaml    # the four benchmark examples, timed
+```
+
+That is the same `theories/` compiled by a different backend, so it both
+exercises the port at full size and gives the figure the Wasm number alone
+cannot: how much of this renderer's cost is the algorithm and how much is
+CertiRocq's calling convention. See [`bench/README.md`](bench/README.md).
 
 ## Running locally
 
@@ -52,8 +63,10 @@ nix run
 | `theories/Proofs.v` | the output-shape theorem, and what `Flt.v`'s own three operations mean |
 | `theories/Tests.v` | expectations checked by conversion at build time |
 | `theories/extraction.v` | the three entry points, and `CertiRocq Compile Wasm` |
+| `theories/extraction_ocaml.v` | the same three, through Rocq's OCaml extraction, for benchmarking |
 | `src/` | the browser front end: renders onto a canvas, with controls |
-| `bench/` | four examples rendered by both this project and the Lean originals, side by side in [`bench/IMAGES.md`](bench/IMAGES.md) |
+| `bench/` | four examples rendered by this project (both backends) and by the Lean originals, side by side in [`bench/IMAGES.md`](bench/IMAGES.md) |
+| `bench/ocaml/` | the OCaml extraction: two primitive shims, a driver, a build script |
 | `FUTURE.md` | what it would take to close the performance gap, and what that is worth |
 
 Everything the controls set is a field of `Scene.knobs`, which `prepare` reads;
@@ -124,8 +137,8 @@ knowing from having written them down:
 
 * `spans_compose` -- that cutting a row into jobs does not change the row --
   is the property both hosts rely on when they size a span to a memory
-  budget, and it needs no float reasoning at all. `Tests.v` checks one
-  instance of it by computation.
+  budget, and it needs no float reasoning at all. `Tests.v` and
+  `bench/ocaml/rocq-render --check` check one instance of it by computation.
 * `Render.channel_byte` is total, and **because** of the argument order in
   `Flt.min` and `Flt.max`: a NaN channel survives the `max` and is caught by
   the `min`. Swap either branch and a NaN reaches `trunc_byte`, which is
@@ -154,15 +167,23 @@ Compiling `theories/Tests.v` is the test suite: its examples are checked by
 conversion, so a build that succeeds is a build whose arithmetic, sampling and
 PPM output still produce the expected values.
 
-On top of that, `bench/` renders four examples with this project and with the
-two Lean programs it was ported from, times both and compares the images
-(`bench/README.md`). It needs a Wasm module, so it cannot run on the float
-port until the backend compiles one; **the numbers below are the fixed-point
-build's** and are kept as the baseline to beat:
+`make check-ocaml` runs the same expectations through the OCaml extraction,
+which is also what checks the two primitive shims in `bench/ocaml/` against
+the kernel operations they stand in for: if `of_uint63` rounded differently,
+or if a comparison ordered NaN rather than returning false, the corner would
+come out somewhere else.
+
+On top of that, `bench/` renders four examples with this project -- through
+either backend -- and with the two Lean programs it was ported from, times
+them and compares the images (`bench/README.md`). The Wasm column needs a
+module the backend cannot build yet, so **the Wasm numbers below are the
+fixed-point build's** and are kept as the baseline to beat; the OCaml column
+is the current sources:
 
 ```sh
 make bench-setup     # clone and build the Lean originals (needs the network)
-make bench           # render, time, compare -- about a minute and a half
+make bench-ocaml     # the float port, against nothing but itself -- seconds
+make bench           # everything that is built -- about a minute and a half
 ```
 
 | example | scene | size | spp | depth | Rocq (Wasm) | Lean, 1 core | Lean, N cores | mean diff |

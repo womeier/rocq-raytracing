@@ -14,3 +14,10 @@ theories/Render.v
 theories/Proofs.v
 theories/Tests.v
 theories/extraction.v
+
+# theories/extraction_ocaml.v is deliberately not listed.  It is a
+# benchmarking tool, not part of the Wasm deliverable, and listing it would
+# put it in the default build -- where it would write into bench/ocaml/ and
+# make `nix build` depend on a directory the derivation has no reason to
+# have.  The Makefile's `ocaml` target compiles it on its own, with the
+# flags above repeated.

@@ -128,6 +128,13 @@
           pkgs.gnumake
           pkgs.python3
           pkgs.wabt # wasm2wat, to look at what came out
+          # `make ocaml`: theories/ through Rocq's own extraction, which is
+          # how the renderer is run and timed while the Wasm backend does
+          # not accept primitive floats.  bench/ocaml/build.sh needs nothing
+          # but ocamlopt and the unix library that comes with it.
+          pkgs.ocaml
+          # the benchmark drivers, bench/*.mjs
+          pkgs.nodejs
         ];
 
         COQBIN = "${rocqPackages.coq}/bin/";
@@ -137,6 +144,8 @@
           echo "  rocq:  $(rocq --version | head -1)"
           echo ""
           echo "Build the Wasm module:  make        (or: nix build)"
+          echo "Build the OCaml one:    make ocaml  (then: make check-ocaml)"
+          echo "Benchmark it:           make bench-ocaml"
           echo "Serve the page:         nix run .#serve   (then open localhost:8000)"
         '';
       };
